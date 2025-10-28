@@ -40,6 +40,18 @@ function normalize( V )
 	return { x: V.x / l, y: V.y / l };
 }
 
+function cubicPoint( P0, P1, P2, P3, t )
+{
+	const it = 1.0 - t;
+	const it2 = it * it;
+	const t2 = t * t;
+
+	return {
+		x: it2 * it * P0.x + 3.0 * it2 * t * P1.x + 3.0 * it * t2 * P2.x + t2 * t * P3.x,
+		y: it2 * it * P0.y + 3.0 * it2 * t * P1.y + 3.0 * it * t2 * P2.y + t2 * t * P3.y
+	};
+}
+
 // 2D affine matrix inverse
 function inv( T )
 {
@@ -80,6 +92,7 @@ class EditableTiling
 		this.edit_h = eh;
 		this.phys_unit = phys_unit;
 		this.tiling = null;
+		this.curveAmount = 0.0;
 
 		this.u_constrain = false;
 	}
@@ -90,13 +103,101 @@ class EditableTiling
 		this.tiling = new IsohedralTiling( tp );
 		this.params = this.tiling.getParameters();
 
-		this.edges = [];
-		for( let idx = 0; idx < this.tiling.numEdgeShapes(); ++idx ) {
-			this.edges.push( [{ x: 0, y: 0 }, { x: 1, y: 0 }] );
-		}
-
+		this.buildDefaultEdges();
 		this.cacheTileShape();
 		this.calcEditorTransform();
+	}
+
+	buildDefaultEdges()
+	{
+		if( !this.tiling ) {
+			this.edges = [];
+			return;
+		}
+
+		this.edges = [];
+		for( let idx = 0; idx < this.tiling.numEdgeShapes(); ++idx ) {
+			this.edges.push( this.createDefaultEdge( idx ) );
+		}
+	}
+
+	createDefaultEdge( idx )
+	{
+		const shape = this.tiling.getEdgeShape( idx );
+		const amp = 0.35 * this.curveAmount;
+
+		const makePoint = ( x, y ) => ({ x: x, y: y });
+
+		if( shape == EdgeShape.I ) {
+			return [ makePoint( 0.0, 0.0 ), makePoint( 1.0, 0.0 ) ];
+		}
+
+		if( shape == EdgeShape.J ) {
+			return [
+				makePoint( 0.0, 0.0 ),
+				makePoint( 0.35, amp ),
+				makePoint( 0.65, 0.5 * amp ),
+				makePoint( 1.0, 0.0 )
+			];
+		}
+
+		if( shape == EdgeShape.S ) {
+			return [
+				makePoint( 0.0, 0.0 ),
+				makePoint( 0.33, amp ),
+				makePoint( 0.67, -amp ),
+				makePoint( 1.0, 0.0 )
+			];
+		}
+
+		if( shape == EdgeShape.U ) {
+			return [
+				makePoint( 0.0, 0.0 ),
+				makePoint( 0.33, amp ),
+				makePoint( 0.67, amp ),
+				makePoint( 1.0, 0.0 )
+			];
+		}
+
+		// Fallback to straight segment.
+		return [ makePoint( 0.0, 0.0 ), makePoint( 1.0, 0.0 ) ];
+	}
+
+	setCurveAmount( amount )
+	{
+		this.curveAmount = Math.max( 0.0, amount );
+		if( this.tiling ) {
+			this.buildDefaultEdges();
+			this.cacheTileShape();
+			this.calcEditorTransform();
+		}
+	}
+
+	getCurveAmount()
+	{
+		return this.curveAmount;
+	}
+
+	sampleEdgePoints( edge, reverse )
+	{
+		if( edge.length == 4 ) {
+			const samples = [];
+			const steps = 16;
+			for( let idx = 0; idx <= steps; ++idx ) {
+				let t = idx / steps;
+				if( reverse ) {
+					t = 1.0 - t;
+				}
+				samples.push( cubicPoint( edge[0], edge[1], edge[2], edge[3], t ) );
+			}
+			return samples;
+		}
+
+		let pts = edge.map( pt => ({ x: pt.x, y: pt.y }) );
+		if( reverse ) {
+			pts.reverse();
+		}
+		return pts;
 	}
 
 	getPrototile()
@@ -112,16 +213,20 @@ class EditableTiling
 	cacheTileShape()
 	{
 		this.tile_shape = [];
+		if( !this.tiling ) {
+			return;
+		}
 
-		for( let i of this.tiling.parts() ) {
-			const ej = this.edges[i.id];
-			let cur = i.rev ? (ej.length-2) : 1;
-			const inc = i.rev ? -1 : 1;
-
-			for( let idx = 0; idx < ej.length - 1; ++idx ) {
-				this.tile_shape.push( mul( i.T, ej[cur] ) );
-				cur += inc;
+		let firstEdge = true;
+		for( let seg of this.tiling.shape() ) {
+			const samples = this.sampleEdgePoints( this.edges[ seg.id ], seg.rev );
+			for( let idx = 0; idx < samples.length; ++idx ) {
+				if( !firstEdge && idx == 0 ) {
+					continue;
+				}
+				this.tile_shape.push( mul( seg.T, samples[idx] ) );
 			}
+			firstEdge = false;
 		}
 	}
 

@@ -12,34 +12,112 @@
 
 'use strict'
 
-import { mul, EdgeShape, tilingTypes, IsohedralTiling } 
+import { mul, EdgeShape, numTypes, tilingTypes, IsohedralTiling } 
 	from '../lib/tactile.js';
 
-function drawRandomTiling()
+const DEFAULT_CANVAS_SCALE = [ 50.0, 0.0, 0.0, 0.0, 50.0, 0.0 ];
+
+let tilingState = null;
+
+function createTilingState()
 {
-	var canvas = document.getElementById( 'canvas' );
-	var ctx = canvas.getContext( '2d' );
+	const tp = tilingTypes[ Math.floor( numTypes * Math.random() ) ];
+	let tiling = new IsohedralTiling( tp );
 
-	const { tiling, edges } = makeRandomTiling();
+	let params = tiling.getParameters();
+	for( let i = 0; i < params.length; ++i ) {
+		params[i] += Math.random() * 0.1 - 0.05;
+	}
+	tiling.setParameters( params );
 
-	// Make some random colours.
-	let cols = [];
+	let baseEdges = [];
+	for( let idx = 0; idx < tiling.numEdgeShapes(); ++idx ) {
+		const shape = tiling.getEdgeShape( idx );
+		if( shape == EdgeShape.I ) {
+			baseEdges.push( { shape: shape, cp: [] } );
+		} else if( shape == EdgeShape.J ) {
+			baseEdges.push( {
+				shape: shape,
+				cp: [
+					{ x: Math.random() * 0.6, y: Math.random() - 0.5 },
+					{ x: Math.random() * 0.6 + 0.4, y: Math.random() - 0.5 }
+				]
+			} );
+		} else if( shape == EdgeShape.S || shape == EdgeShape.U ) {
+			baseEdges.push( {
+				shape: shape,
+				cp: [
+					{ x: Math.random() * 0.6, y: Math.random() - 0.5 }
+				]
+			} );
+		}
+	}
+
+	let colours = [];
 	for( let i = 0; i < 3; ++i ) {
-		cols.push( 'rgb(' +
+		colours.push( 'rgb(' +
 			Math.floor( Math.random() * 255.0 ) + ',' +
 			Math.floor( Math.random() * 255.0 ) + ',' +
 			Math.floor( Math.random() * 255.0 ) + ')' );
 	}
 
+	return { tiling: tiling, baseEdges: baseEdges, colours: colours };
+}
+
+function buildEdges( baseEdges, multiplier )
+{
+	let edges = [];
+	for( let idx = 0; idx < baseEdges.length; ++idx ) {
+		const info = baseEdges[idx];
+		const shape = info.shape;
+
+		if( shape == EdgeShape.I ) {
+			edges.push( [] );
+		} else if( shape == EdgeShape.J ) {
+			const cp0 = info.cp[0];
+			const cp1 = info.cp[1];
+			edges.push( [
+				{ x: cp0.x, y: cp0.y * multiplier },
+				{ x: cp1.x, y: cp1.y * multiplier }
+			] );
+		} else if( shape == EdgeShape.S ) {
+			const cp0 = info.cp[0];
+			const cy = cp0.y * multiplier;
+			edges.push( [
+				{ x: cp0.x, y: cy },
+				{ x: 1.0 - cp0.x, y: -cy }
+			] );
+		} else if( shape == EdgeShape.U ) {
+			const cp0 = info.cp[0];
+			const cy = cp0.y * multiplier;
+			edges.push( [
+				{ x: cp0.x, y: cy },
+				{ x: 1.0 - cp0.x, y: cy }
+			] );
+		}
+	}
+	return edges;
+}
+
+function renderTiling( multiplier )
+{
+	if( !tilingState ) {
+		tilingState = createTilingState();
+	}
+
+	const canvas = document.getElementById( 'canvas' );
+	const ctx = canvas.getContext( '2d' );
+	ctx.clearRect( 0, 0, canvas.width, canvas.height );
+
+	const tiling = tilingState.tiling;
+	const edges = buildEdges( tilingState.baseEdges, multiplier );
+	const cols = tilingState.colours;
+
 	ctx.lineWidth = 1.0;
 	ctx.strokeStyle = '#000';
 
-	// Define a world-to-screen transformation matrix that scales by 50x.
-	const ST = [ 50.0, 0.0, 0.0, 
-				 0.0, 50.0, 0.0 ];
-
 	for( let i of tiling.fillRegionBounds( -2, -2, 12, 12 ) ) {
-		const T = mul( ST, i.T );
+		const T = mul( DEFAULT_CANVAS_SCALE, i.T );
 		ctx.fillStyle = cols[ tiling.getColour( i.t1, i.t2, i.aspect ) ];
 
 		let start = true;
@@ -69,12 +147,12 @@ function drawRandomTiling()
 			if( seg.length == 2 ) {
 				ctx.lineTo( seg[1].x, seg[1].y );
 			} else {
-				ctx.bezierCurveTo( 
-					seg[1].x, seg[1].y, 
-					seg[2].x, seg[2].y, 
+				ctx.bezierCurveTo(
+					seg[1].x, seg[1].y,
+					seg[2].x, seg[2].y,
 					seg[3].x, seg[3].y );
 			}
-		}	
+		}
 
 		ctx.closePath();
 		ctx.fill();
@@ -82,45 +160,20 @@ function drawRandomTiling()
 	}
 }
 
-function makeRandomTiling()
+function updateFromSlider()
 {
-	// Construct a tiling
-	const tp = tilingTypes[ Math.floor( 81 * Math.random() ) ];
-	let tiling = new IsohedralTiling( tp );
-
-	// Randomize the tiling vertex parameters
-	let ps = tiling.getParameters();
-	for( let i = 0; i < ps.length; ++i ) {
-		ps[i] += Math.random() * 0.1 - 0.05;
-	}
-	tiling.setParameters( ps );
-
-	// Make some random edge shapes.  Note that here, we sidestep the 
-	// potential complexity of using .shape() vs. .parts() by checking
-	// ahead of time what the intrinsic edge shape is and building
-	// Bezier control points that have all necessary symmetries.
-
-	let edges = [];
-	for( let i = 0; i < tiling.numEdgeShapes(); ++i ) {
-		let ej = [];
-		const shp = tiling.getEdgeShape( i );
-		if( shp == EdgeShape.I ) {
-			// Pass
-		} else if( shp == EdgeShape.J ) {
-			ej.push( { x: Math.random()*0.6, y : Math.random() - 0.5 } );
-			ej.push( { x: Math.random()*0.6 + 0.4, y : Math.random() - 0.5 } );
-		} else if( shp == EdgeShape.S ) {
-			ej.push( { x: Math.random()*0.6, y : Math.random() - 0.5 } );
-			ej.push( { x: 1.0 - ej[0].x, y: -ej[0].y } );
-		} else if( shp == EdgeShape.U ) {
-			ej.push( { x: Math.random()*0.6, y : Math.random() - 0.5 } );
-			ej.push( { x: 1.0 - ej[0].x, y: ej[0].y } );
-		}
-
-		edges.push( ej );
-	}
-
-	return { tiling: tiling, edges: edges }
+	const slider = document.getElementById( 'curveSlider' );
+	const multiplier = Number( slider.value ) / 100.0;
+	document.getElementById( 'curveValue' ).textContent = multiplier.toFixed( 2 );
+	renderTiling( multiplier );
 }
 
-drawRandomTiling();
+function setup()
+{
+	tilingState = createTilingState();
+	const slider = document.getElementById( 'curveSlider' );
+	slider.addEventListener( 'input', updateFromSlider );
+	updateFromSlider();
+}
+
+window.addEventListener( 'DOMContentLoaded', setup );

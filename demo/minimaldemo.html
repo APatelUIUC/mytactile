@@ -6,7 +6,13 @@
 <body>
 	<div style="margin-left: auto; margin-right: auto;">
 		<p style="width: 500px;">A randomly generated isohedral tiling.
-		Reload the page to generate another one.</p>
+		Use the slider to adjust how much the edges curve.</p>
+
+		<label for="curveSlider" style="display: inline-block; width: 500px;">
+			Curve multiplier: <span id="curveValue">1.00</span>x
+		</label>
+		<input id="curveSlider" type="range" min="0" max="200" value="100"
+			style="width: 500px; margin-bottom: 16px;" />
 
 		<canvas id="canvas" width="500" height="500">
 		</canvas>
