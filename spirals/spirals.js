@@ -79,6 +79,7 @@ function sktch( p5c )
 
 	let ih_slider = null;
 	let ih_label = null;
+	let ih_dropdown = null;
 
 	let A_slider = null;
 	let A_label = null;
@@ -86,21 +87,110 @@ function sktch( p5c )
 	let B_label = null;
 	let do_mobius = false;
 
+	let bezier_slider = null;
+	let bezier_label = null;
+	let bezier_detail = 32; // Number of sample points for bezier curves
+
+	let color_pickers = [];
+	let color_labels = [];
+	let show_color_pickers = false;
+
 	let tv_sliders = null;
 
 	let help_button = null;
 	let fullscreen_button = null;
 	let colour_button = null;
+	let randomize_colour_button = null;
+	let toggle_pickers_button = null;
 	let animate_button = null;
 	let save_button = null;
 
-	const COLS = [
+	let COLS = [
 		[ 25, 52, 65 ],
 		[ 62, 96, 111 ],
 		[ 145, 170, 157 ],
 		[ 209, 219, 189 ],
 		[ 252, 255, 245 ],
 		[ 219, 188, 209 ] ];
+
+	function rgbToHex(r, g, b) {
+		return "#" + [r, g, b].map(x => {
+			const hex = x.toString(16);
+			return hex.length === 1 ? "0" + hex : hex;
+		}).join("");
+	}
+
+	function hexToRgb(hex) {
+		const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+		return result ? [
+			parseInt(result[1], 16),
+			parseInt(result[2], 16),
+			parseInt(result[3], 16)
+		] : null;
+	}
+
+	function updateColourObjects() {
+		// Recreate colouring objects with updated colors
+		if (tiling) {
+			uniform_colouring = new UniformColouring( tiling, COLS[ 4 ] );
+			min_colouring = new MinColouring( tiling, COLS.slice( 1, 4 ) );
+		}
+	}
+
+	function colorPickerChanged(index) {
+		const hex = color_pickers[index].value();
+		const rgb = hexToRgb(hex);
+		if (rgb) {
+			COLS[index] = rgb;
+			updateColourObjects();
+			drawTranslationalUnit();
+			p5c.loop();
+		}
+	}
+
+	function updateColorPickers() {
+		for (let i = 0; i < COLS.length; i++) {
+			if (color_pickers[i]) {
+				color_pickers[i].value(rgbToHex(COLS[i][0], COLS[i][1], COLS[i][2]));
+			}
+		}
+	}
+
+	function randomizeColors() {
+		for (let i = 0; i < COLS.length; i++) {
+			COLS[i] = [
+				Math.floor(Math.random() * 256),
+				Math.floor(Math.random() * 256),
+				Math.floor(Math.random() * 256)
+			];
+		}
+		updateColorPickers();
+		updateColourObjects();
+		drawTranslationalUnit();
+		p5c.loop();
+	}
+
+	function toggleColorPickers() {
+		show_color_pickers = !show_color_pickers;
+		for (let i = 0; i < color_pickers.length; i++) {
+			if (color_pickers[i]) {
+				if (show_color_pickers && !fullscreen) {
+					color_pickers[i].show();
+					color_labels[i].show();
+				} else {
+					color_pickers[i].hide();
+					color_labels[i].hide();
+				}
+			}
+		}
+		if (toggle_pickers_button) {
+			if (show_color_pickers) {
+				toggle_pickers_button.html("Hide Colors");
+			} else {
+				toggle_pickers_button.html("Edit Colors");
+			}
+		}
+	}
 
 	const XMLNS = "http://www.w3.org/2000/svg";
 	const XLINK = "http://www.w3.org/1999/xlink";
@@ -389,9 +479,32 @@ function sktch( p5c )
 		const tt = tilingTypes[ the_type ];
 		const name = ((tt<10)?"IH0":"IH") + tt;
 		ih_label.html( name );
+		if (ih_dropdown) {
+			ih_dropdown.value(the_type.toString());
+		}
 
 		setTilingType();
 
+		p5c.loop();
+	}
+
+	function dropdownChanged()
+	{
+		the_type = p5c.int( ih_dropdown.value() );
+		const tt = tilingTypes[ the_type ];
+		const name = ((tt<10)?"IH0":"IH") + tt;
+		ih_label.html( name );
+		ih_slider.value(the_type);
+
+		setTilingType();
+
+		p5c.loop();
+	}
+
+	function bezierChanged()
+	{
+		bezier_detail = p5c.int( bezier_slider.value() );
+		bezier_label.html( "Bezier Detail: " + bezier_detail );
 		p5c.loop();
 	}
 
@@ -710,7 +823,7 @@ function sktch( p5c )
 
 	function doTouchStarted( id )
 	{
-		for( let b of [help_button, fullscreen_button, colour_button, animate_button, save_button] ) {
+		for( let b of [help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button] ) {
 			const pos = b.position();
 			const sz = b.size();
 			const r = makeBox( pos.x, pos.y, sz.width, sz.height );
@@ -721,7 +834,12 @@ function sktch( p5c )
 
 		if( fullscreen || hitBox( p5c.mouseX, p5c.mouseY,
 				makeBox( WIDTH/2, HEIGHT/2, WIDTH/2, HEIGHT/2 ) ) ) { 
-			do_mobius = !do_mobius;
+			// Check if shift key is pressed to change colors
+			if (p5c.keyIsDown(p5c.SHIFT)) {
+				randomizeColors();
+			} else {
+				do_mobius = !do_mobius;
+			}
 			p5c.loop();
 		} else if( hitBox( p5c.mouseX, p5c.mouseY, 
 				makeBox( 0, 0, WIDTH/2, HEIGHT/2 ) ) ) { 
@@ -909,7 +1027,19 @@ function sktch( p5c )
 			ih_slider.input( tilingTypeChanged );
 		}
 		ih_slider.position( WIDTH/2 + 20, 15 );
-		ih_slider.style( "width", "" + (WIDTH/2-100) + "px" );
+		ih_slider.style( "width", "" + (WIDTH/2-180) + "px" );
+
+		if( ih_dropdown == null ) {
+			ih_dropdown = p5c.createSelect();
+			for (let i = 0; i <= 80; i++) {
+				const tt = tilingTypes[i];
+				const name = ((tt<10)?"IH0":"IH") + tt;
+				ih_dropdown.option(name, i);
+			}
+			ih_dropdown.changed( dropdownChanged );
+		}
+		ih_dropdown.position( WIDTH/2 + (WIDTH/2-150), 15 );
+		ih_dropdown.style( "width", "80px" );
 
 		if( ih_label == null ) {
 			ih_label = p5c.createSpan( "IH01" );
@@ -943,6 +1073,19 @@ function sktch( p5c )
 		B_label.position( WIDTH - 70, HEIGHT/2 - 55 );
 		setLabelStyle( B_label );
 
+		if( bezier_slider == null ) {
+			bezier_slider = p5c.createSlider( 4, 128, 32, 4 );
+			bezier_slider.input( bezierChanged );
+		}
+		bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
+		bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
+
+		if( bezier_label == null ) {
+			bezier_label = p5c.createSpan( "Bezier Detail: " + bezier_detail );
+		}
+		bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
+		setLabelStyle( bezier_label );
+
 		edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
 
 		if( tv_sliders != null ) {
@@ -953,13 +1096,6 @@ function sktch( p5c )
 				yy += 30;
 			}
 		}
-
-		if( help_button == null ) {
-			help_button = p5c.createButton( "Help!" );
-			help_button.mousePressed( doHelp );
-		}
-		help_button.size( 90, 30 );
-		help_button.position( 10, 130 );
 
 		if( fullscreen_button == null ) {
 			fullscreen_button = p5c.createButton( "Fullscreen" );
@@ -975,19 +1111,74 @@ function sktch( p5c )
 		colour_button.size( 90, 30 );
 		colour_button.position( 10, 50 );
 
+		if ( randomize_colour_button == null ) {
+			randomize_colour_button = p5c.createButton( "Randomize" );
+			randomize_colour_button.mousePressed( randomizeColors );
+		}
+		randomize_colour_button.size( 90, 30 );
+		randomize_colour_button.position( 10, 90 );
+
+		if ( toggle_pickers_button == null ) {
+			toggle_pickers_button = p5c.createButton( "Edit Colors" );
+			toggle_pickers_button.mousePressed( toggleColorPickers );
+		}
+		toggle_pickers_button.size( 90, 30 );
+		toggle_pickers_button.position( 10, 130 );
+
+		// Create color pickers
+		if (color_pickers.length === 0) {
+			const colorNames = ["Outline", "Tile 1", "Tile 2", "Tile 3", "Background", "Extra"];
+			let yPos = HEIGHT - 250;
+			
+			for (let i = 0; i < COLS.length; i++) {
+				let label = p5c.createSpan(colorNames[i] + ": ");
+				label.position(10, yPos + i * 35);
+				label.style("font-family", "sans-serif");
+				label.style("font-size", "14px");
+				label.style("color", "black");
+				color_labels.push(label);
+				
+				let picker = p5c.createColorPicker(rgbToHex(COLS[i][0], COLS[i][1], COLS[i][2]));
+				picker.position(90, yPos + i * 35);
+				picker.size(60, 25);
+				picker.input(() => colorPickerChanged(i));
+				color_pickers.push(picker);
+			}
+			
+			// Hide them initially
+			for (let i = 0; i < color_pickers.length; i++) {
+				color_pickers[i].hide();
+				color_labels[i].hide();
+			}
+		} else {
+			// Update positions if window resized
+			let yPos = HEIGHT - 250;
+			for (let i = 0; i < color_pickers.length; i++) {
+				color_labels[i].position(10, yPos + i * 35);
+				color_pickers[i].position(90, yPos + i * 35);
+			}
+		}
+
 		if( animate_button == null ) {
 			animate_button = p5c.createButton( "Animate" );
 			animate_button.mousePressed( toggleAnimation );
 		}
 		animate_button.size( 90, 30 );
-		animate_button.position( 10, 90 );
+		animate_button.position( 10, 170 );
+
+		if( help_button == null ) {
+			help_button = p5c.createButton( "Help!" );
+			help_button.mousePressed( doHelp );
+		}
+		help_button.size( 90, 30 );
+		help_button.position( 10, 210 );
 
 		if( save_button == null ) {
 			save_button = p5c.createButton( "Save" );
 			save_button.mousePressed( doSave );
 		}
 		save_button.size( 90, 30 );
-		save_button.position( 10, 170 );
+		save_button.position( 10, 250 );
 	}
 
 	function doSave()
@@ -1115,7 +1306,7 @@ function sktch( p5c )
 		for (let i = 0; i < vs.length - 1; i++ ) {
 			let v1 = mul( tiling_T, vs[ i ] );
 			let v2 = mul( tiling_T, vs[ i+1 ] );
-			let edge_curves = sample_edge( v1, v2, 32 );
+			let edge_curves = sample_edge( v1, v2, bezier_detail );
 			let bezierCurves = fitCurve( edge_curves, 50 );
 			curves.push(...bezierCurves);
 		}
@@ -1144,8 +1335,9 @@ function sktch( p5c )
 	{
 		fullscreen = !fullscreen;
 		let elts = [
-			ih_slider, ih_label, A_slider, A_label, B_slider, B_label,
-			help_button, fullscreen_button, colour_button, animate_button, save_button ].concat(
+			ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
+			bezier_slider, bezier_label,
+			help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button ].concat(
 				tv_sliders );
 
 		for( let elt of elts ) {
@@ -1154,6 +1346,19 @@ function sktch( p5c )
 					elt.hide();
 				} else {
 					elt.show();
+				}
+			}
+		}
+
+		// Hide color pickers when in fullscreen
+		for (let i = 0; i < color_pickers.length; i++) {
+			if (color_pickers[i]) {
+				if (fullscreen || !show_color_pickers) {
+					color_pickers[i].hide();
+					color_labels[i].hide();
+				} else {
+					color_pickers[i].show();
+					color_labels[i].show();
 				}
 			}
 		}
