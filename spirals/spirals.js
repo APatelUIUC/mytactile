@@ -11,7 +11,7 @@
 import { fitCurve } from './fit-curve.js';
 import { earcut } from './earcut.js'
 import { mul, matchSeg, EdgeShape, numTypes, tilingTypes, IsohedralTiling } 
-	from '../lib/tactile.js';
+	from './tactile.js';
 
 function sktch( p5c )
 {
@@ -1475,4 +1475,4 @@ function sktch( p5c )
 	}
 };
 
-let myp5 = new p5( sktch, 'sketch0' );
+let myp5 = new p5( sktch, 'sktch' );
