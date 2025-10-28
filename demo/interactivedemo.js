@@ -26,6 +26,7 @@ let sktch = function( p5c )
 
 	let the_type = null;
 	let tiling = null;
+	let curve_amount = 0.0;
 
 	let dragging = null;
 
@@ -41,6 +42,7 @@ let sktch = function( p5c )
 	{
 		const tp = tilingTypes[ the_type ];
 		tiling.setType( tp );
+		tiling.setCurveAmount( curve_amount );
 
 		let title = "Tiling: IH";
 		if( tp < 10 ) {
@@ -64,6 +66,7 @@ let sktch = function( p5c )
 				QS.hideControl( "v" + idx );
 			}
 		}
+		vals["curve"] = curve_amount;
 		QS.setValuesFromJSON( vals );
 	}
 
@@ -106,9 +109,35 @@ let sktch = function( p5c )
 			p5c.fill( col[0], col[1], col[2] );
 
 			p5c.beginShape();
-			for( let v of tiling.getTileShape() ) {
-				const P = mul( T, v );
-				p5c.vertex( P.x, P.y );
+			let start = true;
+			for( let seg of proto.shape() ) {
+				const S = mul( T, seg.T );
+				let pts = tiling.getEdgeShape( seg.id ).map( pt => mul( S, pt ) );
+				if( seg.rev ) {
+					pts = pts.reverse();
+				}
+
+				if( pts.length === 0 ) {
+					continue;
+				}
+
+				if( start ) {
+					start = false;
+					p5c.vertex( pts[0].x, pts[0].y );
+				}
+
+				if( pts.length === 2 ) {
+					p5c.vertex( pts[1].x, pts[1].y );
+				} else if( pts.length === 4 ) {
+					p5c.bezierVertex(
+						pts[1].x, pts[1].y,
+						pts[2].x, pts[2].y,
+						pts[3].x, pts[3].y );
+				} else {
+					for( let idx = 1; idx < pts.length; ++idx ) {
+						p5c.vertex( pts[idx].x, pts[idx].y );
+					}
+				}
 			}
 			p5c.endShape( p5c.CLOSE );
 		}
@@ -147,10 +176,25 @@ let sktch = function( p5c )
 			}
 
 			const M = mul( ET, i.T );
+			const edge = tiling.getEdgeShape( i.id );
+			if( edge.length === 0 ) {
+				continue;
+			}
+
 			pg.beginShape();
-			for( let v of tiling.getEdgeShape( i.id ) ) {
-				const P = mul( M, v );
-				pg.vertex( P.x, P.y );
+			const first = mul( M, edge[0] );
+			pg.vertex( first.x, first.y );
+
+			if( edge.length === 4 ) {
+				const c1 = mul( M, edge[1] );
+				const c2 = mul( M, edge[2] );
+				const end = mul( M, edge[3] );
+				pg.bezierVertex( c1.x, c1.y, c2.x, c2.y, end.x, end.y );
+			} else {
+				for( let idx = 1; idx < edge.length; ++idx ) {
+					const P = mul( M, edge[idx] );
+					pg.vertex( P.x, P.y );
+				}
 			}
 			pg.endShape();
 		}
@@ -202,8 +246,14 @@ let sktch = function( p5c )
 
 	function slide()
 	{
-		let params = []
 		vals = QS.getValuesAsJSON();
+		const new_curve = Number( vals["curve"] );
+		if( !Number.isNaN( new_curve ) && new_curve !== curve_amount ) {
+			curve_amount = new_curve;
+			tiling.setCurveAmount( curve_amount );
+		}
+
+		let params = [];
 		for( let idx = 0; idx < tiling.numParams(); ++idx ) {
 			params.push( vals[ "v" + idx ] );
 		}
@@ -290,6 +340,7 @@ let sktch = function( p5c )
 		QS = QuickSettings.create(
 			res.left + window.scrollX + 10, res.top + window.scrollY + 10, 
 			"Tiling: IH01" );
+		QS.addRange( "curve", 0.0, 2.0, curve_amount, 0.01, null );
 		for( let idx = 0; idx < 6; ++idx ) {
 			QS.addRange( "v" + idx, 0, 2, 1, 0.0001, null );
 			QS.hideControl( "v" + idx );
