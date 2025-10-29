@@ -19,8 +19,10 @@ function sktch( p5c )
 	let params = null;
 	let tiling = null;
 	let edges = null;
-	let tile_shape = null;
-	let triangles = null;
+        let tile_shape = null;
+        let triangles = null;
+        let tile_parts_cache = [];
+        let edge_samples_cache = [];
 
 	let colouring = null;
 	let uniform_colouring = null;
@@ -402,29 +404,39 @@ function sktch( p5c )
 		u_constrain = false;
 	}
 
-	function cacheTileShape()
-	{
-		tile_shape = [];
-		let blah = [];
+        function cacheTileShape()
+        {
+                tile_shape = [];
+                tile_parts_cache = [];
+                let blah = [];
 
-		for( let i of tiling.parts() ) {
-			const ej = edges[i.id];
-			let cur = i.rev ? (ej.length-2) : 1;
-			const inc = i.rev ? -1 : 1;
+                for( let i of tiling.parts() ) {
+                        tile_parts_cache.push({
+                                T: [ ...i.T ],
+                                id: i.id,
+                                shape: i.shape,
+                                rev: i.rev,
+                                second: i.second
+                        });
 
-			for( let idx = 0; idx < ej.length - 1; ++idx ) {
-				const { x, y } = mul( i.T, ej[cur] );
-				tile_shape.push( { x : x, y : y } );
-				blah.push( x );
-				blah.push( y );
-				cur += inc;
-			}
-		}
+                        const ej = edges[i.id];
+                        let cur = i.rev ? (ej.length-2) : 1;
+                        const inc = i.rev ? -1 : 1;
 
-		triangles = earcut( blah );
+                        for( let idx = 0; idx < ej.length - 1; ++idx ) {
+                                const { x, y } = mul( i.T, ej[cur] );
+                                tile_shape.push( { x : x, y : y } );
+                                blah.push( x );
+                                blah.push( y );
+                                cur += inc;
+                        }
+                }
 
-		drawTranslationalUnit();
-	}
+                triangles = earcut( blah );
+
+                rebuildEdgeSamples();
+                drawTranslationalUnit();
+        }
 
 	function setTilingType()
 	{
@@ -506,6 +518,8 @@ function sktch( p5c )
         {
                 bezier_amount = p5c.int( bezier_slider.value() ) / 100.0;
                 bezier_label.html( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
+                rebuildEdgeSamples();
+                drawTranslationalUnit();
                 p5c.loop();
         }
 
@@ -574,56 +588,50 @@ function sktch( p5c )
 		const est_sc = Math.sqrt( Math.abs( det / (r1 * r2) ) );
 		// console.log( est_sc );
 
-		fbo.push();
-		fbo.applyMatrix( M[0], M[1], M[2], M[3], 0.0, 0.0 );
-		const bx = getTilingRect( t1, t2 );
+                fbo.push();
+                fbo.applyMatrix( M[0], M[1], M[2], M[3], 0.0, 0.0 );
+                const bx = getTilingRect( t1, t2 );
+                const scaleMatrix = [ FBO_DIM, 0, 0, 0, FBO_DIM, 0 ];
 
-		for( let i of tiling.fillRegionQuad( bx[0], bx[1], bx[2], bx[3] ) ) {
-			const TT = i.T;
-			let tshape = [];
-			for( let v of tile_shape ) {
-				let P = mul( TT, v );
-				P.x *= FBO_DIM;
-				P.y *= FBO_DIM;
-				tshape.push( P );
-			}
+                for( let i of tiling.fillRegionQuad( bx[0], bx[1], bx[2], bx[3] ) ) {
+                        const TT = i.T;
+                        let tshape = [];
+                        for( let v of tile_shape ) {
+                                let P = mul( TT, v );
+                                P.x *= FBO_DIM;
+                                P.y *= FBO_DIM;
+                                tshape.push( P );
+                        }
 
-			const col = colouring.getColour( i.t1, i.t2, i.aspect );
-			fbo.fill( col[0], col[1], col[2] );
-			fbo.stroke( col[0], col[1], col[2] );
-			fbo.strokeWeight( est_sc );
+                        const col = colouring.getColour( i.t1, i.t2, i.aspect );
+                        fbo.fill( col[0], col[1], col[2] );
+                        fbo.stroke( col[0], col[1], col[2] );
+                        fbo.strokeWeight( est_sc );
 
-			for( let idx = 0; idx < triangles.length; idx += 3 ) {
-				fbo.triangle( 
-					tshape[triangles[idx]].x, tshape[triangles[idx]].y,
-					tshape[triangles[idx+1]].x, tshape[triangles[idx+1]].y,
-					tshape[triangles[idx+2]].x, tshape[triangles[idx+2]].y );
-			}
+                        for( let idx = 0; idx < triangles.length; idx += 3 ) {
+                                fbo.triangle(
+                                        tshape[triangles[idx]].x, tshape[triangles[idx]].y,
+                                        tshape[triangles[idx+1]].x, tshape[triangles[idx+1]].y,
+                                        tshape[triangles[idx+2]].x, tshape[triangles[idx+2]].y );
+                        }
 
                         fbo.stroke( COLS[0][0], COLS[0][1], COLS[0][2] );
                         fbo.strokeWeight( 20 * est_sc );
                         fbo.strokeJoin( p5c.ROUND );
                         fbo.noFill();
 
-                        const orientationSign = computePolygonOrientation( tshape );
-                        for( let idx = 0; idx < tile_shape.length; ++idx ) {
-                                const P = tshape[idx];
-                                const Q = tshape[(idx+1)%tile_shape.length];
-
-                                const samples = sampleQuadraticEdge(
-                                        P,
-                                        Q,
-                                        orientationSign,
-                                        bezier_amount,
-                                        BEZIER_SAMPLE_POINTS );
-
-                                for( let s = 0; s < samples.length - 1; ++s ) {
-                                        const A = samples[s];
-                                        const B = samples[s+1];
-                                        fbo.line( A.x, A.y, B.x, B.y );
-                                }
+                        for( let part of tile_parts_cache ) {
+                                const partTransform = mul( TT, part.T );
+                                const fullTransform = mul( scaleMatrix, partTransform );
+                                let prev = null;
+                                iterateEdgeSamplePoints( part.id, part.rev, fullTransform, ( pt ) => {
+                                        if( prev != null ) {
+                                                fbo.line( prev.x, prev.y, pt.x, pt.y );
+                                        }
+                                        prev = pt;
+                                } );
                         }
-		}
+                }
 
 		fbo.pop();
 
@@ -759,46 +767,33 @@ function sktch( p5c )
                         tshape.push( mul( editor_T, v ) );
                 }
 
-                const editorOrientation = computePolygonOrientation( tshape );
-
-		for( let i = 0; i < triangles.length; i += 3 ) {
-			p5c.triangle( 
-				tshape[triangles[i]].x, tshape[triangles[i]].y,
-				tshape[triangles[i+1]].x, tshape[triangles[i+1]].y,
-				tshape[triangles[i+2]].x, tshape[triangles[i+2]].y );
+                for( let i = 0; i < triangles.length; i += 3 ) {
+                        p5c.triangle(
+                                tshape[triangles[i]].x, tshape[triangles[i]].y,
+                                tshape[triangles[i+1]].x, tshape[triangles[i+1]].y,
+                                tshape[triangles[i+2]].x, tshape[triangles[i+2]].y );
 		}
 
 		p5c.strokeWeight( 2.0 );
 		p5c.noFill();
 
-		// Draw edges
-		for( let i of tiling.parts() ) {
-			if( i.shape == EdgeShape.I ) {
-				p5c.stroke( 158 );
-			} else {
-				p5c.stroke( 0 );
-			}
+                // Draw edges
+                for( let i of tile_parts_cache ) {
+                        if( i.shape == EdgeShape.I ) {
+                                p5c.stroke( 158 );
+                        } else {
+                                p5c.stroke( 0 );
+                        }
 
                         const M = mul( editor_T, i.T );
                         let prev = null;
-                        for( let v of edges[i.id] ) {
-                                const P = mul( M, v );
+                        iterateEdgeSamplePoints( i.id, i.rev, M, ( pt ) => {
                                 if( prev != null ) {
-                                        const samples = sampleQuadraticEdge(
-                                                prev,
-                                                P,
-                                                editorOrientation,
-                                                bezier_amount,
-                                                BEZIER_SAMPLE_POINTS );
-                                        for( let s = 0; s < samples.length - 1; ++s ) {
-                                                const A = samples[s];
-                                                const B = samples[s+1];
-                                                p5c.line( A.x, A.y, B.x, B.y );
-                                        }
+                                        p5c.line( prev.x, prev.y, pt.x, pt.y );
                                 }
-                                prev = P;
-                        }
-		}
+                                prev = pt;
+                        } );
+                }
 
 		// Draw tiling vertices
 		p5c.noStroke();
@@ -809,11 +804,11 @@ function sktch( p5c )
 		}
 
 		// Draw editable vertices
-		for( let i of tiling.parts() ) {
-			const shp = i.shape;
-			const id = i.id;
-			const ej = edges[id];
-			const T = mul( editor_T, i.T );
+                for( let i of tile_parts_cache ) {
+                        const shp = i.shape;
+                        const id = i.id;
+                        const ej = edges[id];
+                        const T = mul( editor_T, i.T );
 
 			for( let idx = 1; idx < ej.length - 1; ++idx ) {
 				p5c.fill( 0 );
@@ -1294,42 +1289,18 @@ function sktch( p5c )
 		return defs;
 	}
 
-        function computePolygonOrientation( pts )
-        {
-                if( pts.length < 3 ) {
-                        return 1;
-                }
-
-                let area2 = 0;
-                for( let i = 0; i < pts.length; ++i ) {
-                        const j = ( i + 1 ) % pts.length;
-                        area2 += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
-                }
-
-                if( area2 === 0 ) {
-                        return 1;
-                }
-
-                return (area2 > 0) ? 1 : -1;
-        }
-
-        function sampleQuadraticEdge( p1, p2, orientationSign, amount, sampleCount )
+        function sampleQuadraticSegment( p1, p2, amount, sampleCount )
         {
                 let ctrl = {
                         x: 0.5 * ( p1.x + p2.x ),
                         y: 0.5 * ( p1.y + p2.y )
                 };
 
-                if( amount > 0.0 ) {
+                if( amount !== 0.0 ) {
                         const edge = { x: p2.x - p1.x, y: p2.y - p1.y };
                         const length = Math.hypot( edge.x, edge.y );
                         if( length > 0.0 ) {
-                                let normal = { x: edge.y, y: -edge.x };
-                                if( orientationSign < 0 ) {
-                                        normal.x = -normal.x;
-                                        normal.y = -normal.y;
-                                }
-
+                                let normal = { x: -edge.y, y: edge.x };
                                 const normLen = Math.hypot( normal.x, normal.y );
                                 if( normLen > 0.0 ) {
                                         normal.x /= normLen;
@@ -1354,6 +1325,63 @@ function sktch( p5c )
                 return pts;
         }
 
+        function buildEdgeSamplesForEdge( edgePoints, amount, sampleCount )
+        {
+                if( edgePoints.length < 2 ) {
+                        return [];
+                }
+
+                let segments = [];
+                for( let idx = 0; idx < edgePoints.length - 1; ++idx ) {
+                        segments.push(
+                                sampleQuadraticSegment(
+                                        edgePoints[idx],
+                                        edgePoints[idx+1],
+                                        amount,
+                                        sampleCount ) );
+                }
+
+                return segments;
+        }
+
+        function rebuildEdgeSamples()
+        {
+                if( !edges ) {
+                        edge_samples_cache = [];
+                        return;
+                }
+
+                edge_samples_cache = edges.map( edgePoints =>
+                        buildEdgeSamplesForEdge( edgePoints, bezier_amount, BEZIER_SAMPLE_POINTS ) );
+        }
+
+        function iterateEdgeSamplePoints( edgeId, reversed, transformMatrix, callback )
+        {
+                const segments = edge_samples_cache[ edgeId ] || [];
+
+                if( !reversed ) {
+                        for( let segIdx = 0; segIdx < segments.length; ++segIdx ) {
+                                const seg = segments[ segIdx ];
+                                for( let ptIdx = 0; ptIdx < seg.length; ++ptIdx ) {
+                                        if( segIdx > 0 && ptIdx === 0 ) {
+                                                continue;
+                                        }
+                                        callback( mul( transformMatrix, seg[ ptIdx ] ) );
+                                }
+                        }
+                } else {
+                        for( let segIdx = segments.length - 1; segIdx >= 0; --segIdx ) {
+                                const seg = segments[ segIdx ];
+                                for( let ptIdx = seg.length - 1; ptIdx >= 0; --ptIdx ) {
+                                        if( segIdx < segments.length - 1 && ptIdx === seg.length - 1 ) {
+                                                continue;
+                                        }
+                                        callback( mul( transformMatrix, seg[ ptIdx ] ) );
+                                }
+                        }
+                }
+        }
+
         // Return an SVG path representing the spiral tiling aspect with transformation T.
         function getSpiralSVG( T )
         {
@@ -1365,26 +1393,25 @@ function sktch( p5c )
                         };
                 }
 
-                // Apply the aspect transformation to the prototile.
-                let vs = [ ...tile_shape, tile_shape[0] ];
-                vs = vs.map( v => mul( T, v ) );
-                let transformed = vs.map( v => mul( tiling_T, v ) );
-                let actual = transformed.map( spiral );
-                const polygonPts = actual.slice( 0, actual.length - 1 );
-                const orientationSign = computePolygonOrientation( polygonPts );
-
                 // Make bezier curves to represent each edge of the spiral tile.
                 let curves = [];
-                for( let i = 0; i < actual.length - 1; i++ ) {
-                        const edgeSamples = sampleQuadraticEdge(
-                                actual[i],
-                                actual[i+1],
-                                orientationSign,
-                                bezier_amount,
-                                BEZIER_SAMPLE_POINTS );
-                        const edge_curves = edgeSamples.map( pt => [ pt.x, pt.y ] );
-                        const bezierCurves = fitCurve( edge_curves, 50 );
-                        curves.push( ...bezierCurves );
+                for( let part of tile_parts_cache ) {
+                        const aspectTransform = mul( T, part.T );
+                        const spiralTransform = mul( tiling_T, aspectTransform );
+                        let edgeSamples = [];
+                        iterateEdgeSamplePoints( part.id, part.rev, spiralTransform, ( pt ) => {
+                                const spr = spiral( pt );
+                                edgeSamples.push( [ spr.x, spr.y ] );
+                        } );
+
+                        if( edgeSamples.length >= 2 ) {
+                                const bezierCurves = fitCurve( edgeSamples, 50 );
+                                curves.push( ...bezierCurves );
+                        }
+                }
+
+                if( curves.length === 0 ) {
+                        return document.createElementNS( XMLNS, 'path' );
                 }
 
 		// Create SVG string representation of bezier curves.
