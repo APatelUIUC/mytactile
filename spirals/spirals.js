@@ -87,9 +87,10 @@ function sktch( p5c )
 	let B_label = null;
 	let do_mobius = false;
 
-	let bezier_slider = null;
-	let bezier_label = null;
-	let bezier_detail = 32; // Number of sample points for bezier curves
+        let bezier_slider = null;
+        let bezier_label = null;
+        let bezier_amount = 0.0;
+        const BEZIER_SAMPLE_POINTS = 32; // Number of sample points for bezier curves
 
 	let color_pickers = [];
 	let color_labels = [];
@@ -501,12 +502,12 @@ function sktch( p5c )
 		p5c.loop();
 	}
 
-	function bezierChanged()
-	{
-		bezier_detail = p5c.int( bezier_slider.value() );
-		bezier_label.html( "Bezier Detail: " + bezier_detail );
-		p5c.loop();
-	}
+        function bezierChanged()
+        {
+                bezier_amount = p5c.int( bezier_slider.value() ) / 100.0;
+                bezier_label.html( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
+                p5c.loop();
+        }
 
 	function spiralChanged()
 	{
@@ -599,17 +600,29 @@ function sktch( p5c )
 					tshape[triangles[idx+2]].x, tshape[triangles[idx+2]].y );
 			}
 
-			fbo.stroke( COLS[0][0], COLS[0][1], COLS[0][2] );
-			fbo.strokeWeight( 20 * est_sc );
-			fbo.strokeJoin( p5c.ROUND );
-			fbo.noFill();
+                        fbo.stroke( COLS[0][0], COLS[0][1], COLS[0][2] );
+                        fbo.strokeWeight( 20 * est_sc );
+                        fbo.strokeJoin( p5c.ROUND );
+                        fbo.noFill();
 
-			for( let idx = 0; idx < tile_shape.length; ++idx ) {
-				const P = tshape[idx];
-				const Q = tshape[(idx+1)%tile_shape.length];
+                        const orientationSign = computePolygonOrientation( tshape );
+                        for( let idx = 0; idx < tile_shape.length; ++idx ) {
+                                const P = tshape[idx];
+                                const Q = tshape[(idx+1)%tile_shape.length];
 
-				fbo.line( P.x, P.y, Q.x, Q.y );
-			}
+                                const samples = sampleQuadraticEdge(
+                                        P,
+                                        Q,
+                                        orientationSign,
+                                        bezier_amount,
+                                        BEZIER_SAMPLE_POINTS );
+
+                                for( let s = 0; s < samples.length - 1; ++s ) {
+                                        const A = samples[s];
+                                        const B = samples[s+1];
+                                        fbo.line( A.x, A.y, B.x, B.y );
+                                }
+                        }
 		}
 
 		fbo.pop();
@@ -742,9 +755,11 @@ function sktch( p5c )
 
 		let tshape = [];
 
-		for( let v of tile_shape ) {
-			tshape.push( mul( editor_T, v ) );
-		}
+                for( let v of tile_shape ) {
+                        tshape.push( mul( editor_T, v ) );
+                }
+
+                const editorOrientation = computePolygonOrientation( tshape );
 
 		for( let i = 0; i < triangles.length; i += 3 ) {
 			p5c.triangle( 
@@ -764,15 +779,25 @@ function sktch( p5c )
 				p5c.stroke( 0 );
 			}
 
-			const M = mul( editor_T, i.T );
-			let prev = null;
-			for( let v of edges[i.id] ) {
-				const P = mul( M, v );
-				if( prev != null ) {
-					p5c.line( prev.x, prev.y, P.x, P.y );
-				}
-				prev = P;
-			}
+                        const M = mul( editor_T, i.T );
+                        let prev = null;
+                        for( let v of edges[i.id] ) {
+                                const P = mul( M, v );
+                                if( prev != null ) {
+                                        const samples = sampleQuadraticEdge(
+                                                prev,
+                                                P,
+                                                editorOrientation,
+                                                bezier_amount,
+                                                BEZIER_SAMPLE_POINTS );
+                                        for( let s = 0; s < samples.length - 1; ++s ) {
+                                                const A = samples[s];
+                                                const B = samples[s+1];
+                                                p5c.line( A.x, A.y, B.x, B.y );
+                                        }
+                                }
+                                prev = P;
+                        }
 		}
 
 		// Draw tiling vertices
@@ -1073,18 +1098,18 @@ function sktch( p5c )
 		B_label.position( WIDTH - 70, HEIGHT/2 - 55 );
 		setLabelStyle( B_label );
 
-		if( bezier_slider == null ) {
-			bezier_slider = p5c.createSlider( 4, 128, 32, 4 );
-			bezier_slider.input( bezierChanged );
-		}
-		bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
-		bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
+                if( bezier_slider == null ) {
+                        bezier_slider = p5c.createSlider( 0, 100, 0, 1 );
+                        bezier_slider.input( bezierChanged );
+                }
+                bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
+                bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
 
-		if( bezier_label == null ) {
-			bezier_label = p5c.createSpan( "Bezier Detail: " + bezier_detail );
-		}
-		bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
-		setLabelStyle( bezier_label );
+                if( bezier_label == null ) {
+                        bezier_label = p5c.createSpan( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
+                }
+                bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
+                setLabelStyle( bezier_label );
 
 		edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
 
@@ -1269,47 +1294,98 @@ function sktch( p5c )
 		return defs;
 	}
 
-	// Return an SVG path representing the spiral tiling aspect with transformation T.
-	function getSpiralSVG( T )
-	{
-		// Return the spiral coordinates of point v.
-		function spiral( v ) {
-			return {
-				x: +( Math.exp(v.x) * Math.cos(v.y) ),
-				y: +( Math.exp(v.x) * Math.sin(v.y) )}
-		}
+        function computePolygonOrientation( pts )
+        {
+                if( pts.length < 3 ) {
+                        return 1;
+                }
 
-		// Return the point that divides the line segment from v1 to v2 into ratio m:n.
-		function section( v1, v2, m, n ) {
-			return {
-				x: ( m*v1.x + n*v2.x ) / ( m + n ),
-				y: ( m*v1.y + n*v2.y ) / ( m + n )
-			}
-		}
+                let area2 = 0;
+                for( let i = 0; i < pts.length; ++i ) {
+                        const j = ( i + 1 ) % pts.length;
+                        area2 += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+                }
 
-		// Return sample points from tiling edge.
-		function sample_edge( v1, v2, n ) {
-			let pts = [];
-			for ( let i = 0; i <= n; i++ ) {
-				let p = spiral( section( v1, v2, n - i, i ) );
-				pts.push( [ p.x, p.y ] );
-			}
-			return pts;
-		}
+                if( area2 === 0 ) {
+                        return 1;
+                }
 
-		// Apply the aspect transformation to the prototile.
-		let vs = [ ...tile_shape, tile_shape[0] ];
-		vs = vs.map( v => mul( T, v ) );
+                return (area2 > 0) ? 1 : -1;
+        }
 
-		// Make bezier curves to represent each edge of the spiral tile.
-		let curves = [];
-		for (let i = 0; i < vs.length - 1; i++ ) {
-			let v1 = mul( tiling_T, vs[ i ] );
-			let v2 = mul( tiling_T, vs[ i+1 ] );
-			let edge_curves = sample_edge( v1, v2, bezier_detail );
-			let bezierCurves = fitCurve( edge_curves, 50 );
-			curves.push(...bezierCurves);
-		}
+        function sampleQuadraticEdge( p1, p2, orientationSign, amount, sampleCount )
+        {
+                let ctrl = {
+                        x: 0.5 * ( p1.x + p2.x ),
+                        y: 0.5 * ( p1.y + p2.y )
+                };
+
+                if( amount > 0.0 ) {
+                        const edge = { x: p2.x - p1.x, y: p2.y - p1.y };
+                        const length = Math.hypot( edge.x, edge.y );
+                        if( length > 0.0 ) {
+                                let normal = { x: edge.y, y: -edge.x };
+                                if( orientationSign < 0 ) {
+                                        normal.x = -normal.x;
+                                        normal.y = -normal.y;
+                                }
+
+                                const normLen = Math.hypot( normal.x, normal.y );
+                                if( normLen > 0.0 ) {
+                                        normal.x /= normLen;
+                                        normal.y /= normLen;
+
+                                        const offset = length * amount * 0.5;
+                                        ctrl.x += normal.x * offset;
+                                        ctrl.y += normal.y * offset;
+                                }
+                        }
+                }
+
+                let pts = [];
+                for( let i = 0; i <= sampleCount; i++ ) {
+                        const t = i / sampleCount;
+                        const mt = 1.0 - t;
+                        const x = mt*mt*p1.x + 2*mt*t*ctrl.x + t*t*p2.x;
+                        const y = mt*mt*p1.y + 2*mt*t*ctrl.y + t*t*p2.y;
+                        pts.push( { x, y } );
+                }
+
+                return pts;
+        }
+
+        // Return an SVG path representing the spiral tiling aspect with transformation T.
+        function getSpiralSVG( T )
+        {
+                // Return the spiral coordinates of point v.
+                function spiral( v ) {
+                        return {
+                                x: +( Math.exp( v.x ) * Math.cos( v.y ) ),
+                                y: +( Math.exp( v.x ) * Math.sin( v.y ) )
+                        };
+                }
+
+                // Apply the aspect transformation to the prototile.
+                let vs = [ ...tile_shape, tile_shape[0] ];
+                vs = vs.map( v => mul( T, v ) );
+                let transformed = vs.map( v => mul( tiling_T, v ) );
+                let actual = transformed.map( spiral );
+                const polygonPts = actual.slice( 0, actual.length - 1 );
+                const orientationSign = computePolygonOrientation( polygonPts );
+
+                // Make bezier curves to represent each edge of the spiral tile.
+                let curves = [];
+                for( let i = 0; i < actual.length - 1; i++ ) {
+                        const edgeSamples = sampleQuadraticEdge(
+                                actual[i],
+                                actual[i+1],
+                                orientationSign,
+                                bezier_amount,
+                                BEZIER_SAMPLE_POINTS );
+                        const edge_curves = edgeSamples.map( pt => [ pt.x, pt.y ] );
+                        const bezierCurves = fitCurve( edge_curves, 50 );
+                        curves.push( ...bezierCurves );
+                }
 
 		// Create SVG string representation of bezier curves.
 		let d = [`M ${curves[0][0][0]} ${curves[0][0][1]}`];
