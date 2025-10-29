@@ -8,7 +8,6 @@
 
 'use strict';
 
-import { fitCurve } from './fit-curve.js';
 import { earcut } from './earcut.js'
 import { mul, matchSeg, EdgeShape, numTypes, tilingTypes, IsohedralTiling } 
 	from './tactile.js';
@@ -87,10 +86,6 @@ function sktch( p5c )
 	let B_label = null;
 	let do_mobius = false;
 
-	let bezier_slider = null;
-	let bezier_label = null;
-	let bezier_detail = 32; // Number of sample points for bezier curves
-
 	let color_pickers = [];
 	let color_labels = [];
 	let show_color_pickers = false;
@@ -104,6 +99,7 @@ function sktch( p5c )
 	let toggle_pickers_button = null;
 	let animate_button = null;
 	let save_button = null;
+	let wow_button = null;
 
 	let COLS = [
 		[ 25, 52, 65 ],
@@ -501,13 +497,6 @@ function sktch( p5c )
 		p5c.loop();
 	}
 
-	function bezierChanged()
-	{
-		bezier_detail = p5c.int( bezier_slider.value() );
-		bezier_label.html( "Bezier Detail: " + bezier_detail );
-		p5c.loop();
-	}
-
 	function spiralChanged()
 	{
 		spiral_A = p5c.int( A_slider.value() );
@@ -823,7 +812,7 @@ function sktch( p5c )
 
 	function doTouchStarted( id )
 	{
-		for( let b of [help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button] ) {
+		for( let b of [help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button] ) {
 			const pos = b.position();
 			const sz = b.size();
 			const r = makeBox( pos.x, pos.y, sz.width, sz.height );
@@ -1073,19 +1062,6 @@ function sktch( p5c )
 		B_label.position( WIDTH - 70, HEIGHT/2 - 55 );
 		setLabelStyle( B_label );
 
-		if( bezier_slider == null ) {
-			bezier_slider = p5c.createSlider( 4, 128, 32, 4 );
-			bezier_slider.input( bezierChanged );
-		}
-		bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
-		bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
-
-		if( bezier_label == null ) {
-			bezier_label = p5c.createSpan( "Bezier Detail: " + bezier_detail );
-		}
-		bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
-		setLabelStyle( bezier_label );
-
 		edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
 
 		if( tv_sliders != null ) {
@@ -1179,6 +1155,13 @@ function sktch( p5c )
 		}
 		save_button.size( 90, 30 );
 		save_button.position( 10, 250 );
+
+		if( wow_button == null ) {
+			wow_button = p5c.createButton( "Wow" );
+			wow_button.mousePressed( doWow );
+		}
+		wow_button.size( 90, 30 );
+		wow_button.position( 10, 290 );
 	}
 
 	function doSave()
@@ -1301,21 +1284,22 @@ function sktch( p5c )
 		let vs = [ ...tile_shape, tile_shape[0] ];
 		vs = vs.map( v => mul( T, v ) );
 
-		// Make bezier curves to represent each edge of the spiral tile.
-		let curves = [];
+		// Sample points along each edge of the spiral tile.
+		let pts = [];
 		for (let i = 0; i < vs.length - 1; i++ ) {
 			let v1 = mul( tiling_T, vs[ i ] );
 			let v2 = mul( tiling_T, vs[ i+1 ] );
-			let edge_curves = sample_edge( v1, v2, bezier_detail );
-			let bezierCurves = fitCurve( edge_curves, 50 );
-			curves.push(...bezierCurves);
+			let edge_pts = sample_edge( v1, v2, 32 );
+			// Add all points except the last one to avoid duplicates at vertices
+			pts.push(...edge_pts.slice(0, -1));
 		}
 
-		// Create SVG string representation of bezier curves.
-		let d = [`M ${curves[0][0][0]} ${curves[0][0][1]}`];
-		for ( let c of curves ) {
-			d.push(`C ${c[1][0]} ${c[1][1]}, ${c[2][0]} ${c[2][1]}, ${c[3][0]} ${c[3][1]}`)
+		// Create SVG path string from sampled points.
+		let d = [`M ${pts[0][0]} ${pts[0][1]}`];
+		for (let i = 1; i < pts.length; i++) {
+			d.push(`L ${pts[i][0]} ${pts[i][1]}`);
 		}
+		d.push('Z'); // Close the path
 
 		let path = document.createElementNS( XMLNS, 'path' );
 		path.setAttribute('d', d.join(' '));
@@ -1331,13 +1315,54 @@ function sktch( p5c )
 		window.open( "https://isohedral.ca" );
 	}
 
+	function doWow()
+	{
+		// Randomize IH tiling type (0-80 are valid indices in tilingTypes array)
+		const randomIH = Math.floor(Math.random() * 81);
+		ih_slider.value(randomIH);
+		tilingTypeChanged();
+		
+		// Randomize A slider within first 1/3 (0 to ~6.67)
+		const randomA = Math.floor(Math.random() * 7);
+		A_slider.value(randomA);
+		
+		// Randomize B slider within first 1/3 (0 to ~6.67)
+		const randomB = Math.floor(Math.random() * 7);
+		B_slider.value(randomB);
+		
+		spiralChanged();
+		
+		// Randomize all tiling parameter sliders within first 1/3 (0 to ~166.67)
+		if (tv_sliders != null) {
+			for (let sl of tv_sliders) {
+				const randomVal = Math.random() * (500.0 / 3.0);
+				sl.value(randomVal);
+			}
+			parameterChanged();
+		}
+		
+		// Enable colour if not already enabled
+		if (!colour) {
+			toggleColour();
+		}
+		// Randomize colors
+		randomizeColors();
+		// Enable animation if not already enabled
+		if (!animating) {
+			toggleAnimation();
+		}
+		// Enable fullscreen if not already enabled
+		if (!fullscreen) {
+			toggleFullscreen();
+		}
+	}
+
 	function toggleFullscreen()
 	{
 		fullscreen = !fullscreen;
 		let elts = [
 			ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
-			bezier_slider, bezier_label,
-			help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button ].concat(
+			help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button ].concat(
 				tv_sliders );
 
 		for( let elt of elts ) {
@@ -1363,10 +1388,11 @@ function sktch( p5c )
 			}
 		}
 
-		fullscreen_button.show();
+		// Don't show fullscreen button in fullscreen mode
 		if( fullscreen ) {
 			fullscreen_button.html( "Fullscreen Off" );
 		} else {
+			fullscreen_button.show();
 			fullscreen_button.html( "Fullscreen" );
 		}
 
@@ -1426,6 +1452,88 @@ function sktch( p5c )
 		setupInterface();
 		calculateTilingTransform();
 		p5c.loop();
+	}
+
+	p5c.keyPressed = function()
+	{
+		// Spacebar does the same as Wow button, but preserves fullscreen state
+		if (p5c.keyCode === 32) {
+			const wasFullscreen = fullscreen;
+			
+			// Randomize IH tiling type (0-80 are valid indices in tilingTypes array)
+			const randomIH = Math.floor(Math.random() * 81);
+			ih_slider.value(randomIH);
+			tilingTypeChanged();
+			
+			// Randomize A slider within first 1/3 (0 to ~6.67)
+			const randomA = Math.floor(Math.random() * 7);
+			A_slider.value(randomA);
+			
+			// Randomize B slider within first 1/3 (0 to ~6.67)
+			const randomB = Math.floor(Math.random() * 7);
+			B_slider.value(randomB);
+			
+			spiralChanged();
+			
+			// Randomize all tiling parameter sliders within first 1/3 (0 to ~166.67)
+			if (tv_sliders != null) {
+				for (let sl of tv_sliders) {
+					const randomVal = Math.random() * (500.0 / 3.0);
+					sl.value(randomVal);
+				}
+				parameterChanged();
+			}
+			
+			// Enable colour if not already enabled
+			if (!colour) {
+				toggleColour();
+			}
+			// Randomize colors
+			randomizeColors();
+			// Enable animation if not already enabled
+			if (!animating) {
+				toggleAnimation();
+			}
+			// Enable fullscreen only if not already in fullscreen
+			if (!wasFullscreen && !fullscreen) {
+				toggleFullscreen();
+			}
+			
+			// If we're in fullscreen, ensure all UI elements are hidden
+			if (fullscreen) {
+				let elts = [
+					ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
+					help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button
+				];
+				if (tv_sliders != null) {
+					elts = elts.concat(tv_sliders);
+				}
+				
+				for (let elt of elts) {
+					if (elt != null) {
+						elt.hide();
+					}
+				}
+				
+				// Hide color pickers
+				for (let i = 0; i < color_pickers.length; i++) {
+					if (color_pickers[i]) {
+						color_pickers[i].hide();
+						color_labels[i].hide();
+					}
+				}
+			}
+			
+			return false;
+		}
+		
+		// ESC key exits fullscreen
+		if (p5c.keyCode === p5c.ESCAPE) {
+			if (fullscreen) {
+				toggleFullscreen();
+				return false;
+			}
+		}
 	}
 
 	p5c.draw = function()
