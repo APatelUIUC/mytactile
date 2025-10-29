@@ -87,9 +87,10 @@ function sktch( p5c )
 	let B_label = null;
 	let do_mobius = false;
 
-	let bezier_slider = null;
-	let bezier_label = null;
-	let bezier_detail = 32; // Number of sample points for bezier curves
+        let bezier_slider = null;
+        let bezier_label = null;
+        let bezier_amount = 0.0;
+        const BEZIER_SAMPLE_POINTS = 32; // Number of sample points for bezier curves
 
 	let color_pickers = [];
 	let color_labels = [];
@@ -501,12 +502,18 @@ function sktch( p5c )
 		p5c.loop();
 	}
 
-	function bezierChanged()
-	{
-		bezier_detail = p5c.int( bezier_slider.value() );
-		bezier_label.html( "Bezier Detail: " + bezier_detail );
-		p5c.loop();
-	}
+        function refreshCurvedEdges()
+        {
+                drawTranslationalUnit();
+                p5c.loop();
+        }
+
+        function bezierChanged()
+        {
+                bezier_amount = p5c.int( bezier_slider.value() ) / 100.0;
+                bezier_label.html( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
+                refreshCurvedEdges();
+        }
 
 	function spiralChanged()
 	{
@@ -599,18 +606,25 @@ function sktch( p5c )
 					tshape[triangles[idx+2]].x, tshape[triangles[idx+2]].y );
 			}
 
-			fbo.stroke( COLS[0][0], COLS[0][1], COLS[0][2] );
-			fbo.strokeWeight( 20 * est_sc );
-			fbo.strokeJoin( p5c.ROUND );
-			fbo.noFill();
+                        fbo.stroke( COLS[0][0], COLS[0][1], COLS[0][2] );
+                        fbo.strokeWeight( 20 * est_sc );
+                        fbo.strokeJoin( p5c.ROUND );
+                        fbo.noFill();
 
-			for( let idx = 0; idx < tile_shape.length; ++idx ) {
-				const P = tshape[idx];
-				const Q = tshape[(idx+1)%tile_shape.length];
+                        const orientationSign = computePolygonOrientation( tshape );
+                        const samples = sampleBezierPolyline(
+                                tshape,
+                                orientationSign,
+                                bezier_amount,
+                                BEZIER_SAMPLE_POINTS,
+                                true );
 
-				fbo.line( P.x, P.y, Q.x, Q.y );
-			}
-		}
+                        for( let s = 0; s < samples.length - 1; ++s ) {
+                                const A = samples[s];
+                                const B = samples[s+1];
+                                fbo.line( A.x, A.y, B.x, B.y );
+                        }
+                }
 
 		fbo.pop();
 
@@ -742,9 +756,11 @@ function sktch( p5c )
 
 		let tshape = [];
 
-		for( let v of tile_shape ) {
-			tshape.push( mul( editor_T, v ) );
-		}
+                for( let v of tile_shape ) {
+                        tshape.push( mul( editor_T, v ) );
+                }
+
+                const editorOrientation = computePolygonOrientation( tshape );
 
 		for( let i = 0; i < triangles.length; i += 3 ) {
 			p5c.triangle( 
@@ -764,15 +780,20 @@ function sktch( p5c )
 				p5c.stroke( 0 );
 			}
 
-			const M = mul( editor_T, i.T );
-			let prev = null;
-			for( let v of edges[i.id] ) {
-				const P = mul( M, v );
-				if( prev != null ) {
-					p5c.line( prev.x, prev.y, P.x, P.y );
-				}
-				prev = P;
-			}
+                        const M = mul( editor_T, i.T );
+                        const edgePts = edges[i.id].map( v => mul( M, v ) );
+                        const samples = sampleBezierPolyline(
+                                edgePts,
+                                editorOrientation,
+                                bezier_amount,
+                                BEZIER_SAMPLE_POINTS,
+                                false );
+
+                        for( let s = 0; s < samples.length - 1; ++s ) {
+                                const A = samples[s];
+                                const B = samples[s+1];
+                                p5c.line( A.x, A.y, B.x, B.y );
+                        }
 		}
 
 		// Draw tiling vertices
@@ -1073,18 +1094,20 @@ function sktch( p5c )
 		B_label.position( WIDTH - 70, HEIGHT/2 - 55 );
 		setLabelStyle( B_label );
 
-		if( bezier_slider == null ) {
-			bezier_slider = p5c.createSlider( 4, 128, 32, 4 );
-			bezier_slider.input( bezierChanged );
-		}
-		bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
-		bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
+                if( bezier_slider == null ) {
+                        bezier_slider = p5c.createSlider( 0, 100, 0, 1 );
+                        bezier_slider.input( bezierChanged );
+                        bezier_slider.mouseReleased( refreshCurvedEdges );
+                        bezier_slider.touchEnded( refreshCurvedEdges );
+                }
+                bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
+                bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
 
-		if( bezier_label == null ) {
-			bezier_label = p5c.createSpan( "Bezier Detail: " + bezier_detail );
-		}
-		bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
-		setLabelStyle( bezier_label );
+                if( bezier_label == null ) {
+                        bezier_label = p5c.createSpan( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
+                }
+                bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
+                setLabelStyle( bezier_label );
 
 		edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
 
@@ -1269,47 +1292,208 @@ function sktch( p5c )
 		return defs;
 	}
 
-	// Return an SVG path representing the spiral tiling aspect with transformation T.
-	function getSpiralSVG( T )
-	{
-		// Return the spiral coordinates of point v.
-		function spiral( v ) {
-			return {
-				x: +( Math.exp(v.x) * Math.cos(v.y) ),
-				y: +( Math.exp(v.x) * Math.sin(v.y) )}
-		}
+        function computePolygonOrientation( pts )
+        {
+                if( pts.length < 3 ) {
+                        return 1;
+                }
 
-		// Return the point that divides the line segment from v1 to v2 into ratio m:n.
-		function section( v1, v2, m, n ) {
-			return {
-				x: ( m*v1.x + n*v2.x ) / ( m + n ),
-				y: ( m*v1.y + n*v2.y ) / ( m + n )
-			}
-		}
+                let area2 = 0;
+                for( let i = 0; i < pts.length; ++i ) {
+                        const j = ( i + 1 ) % pts.length;
+                        area2 += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+                }
 
-		// Return sample points from tiling edge.
-		function sample_edge( v1, v2, n ) {
-			let pts = [];
-			for ( let i = 0; i <= n; i++ ) {
-				let p = spiral( section( v1, v2, n - i, i ) );
-				pts.push( [ p.x, p.y ] );
-			}
-			return pts;
-		}
+                if( area2 === 0 ) {
+                        return 1;
+                }
 
-		// Apply the aspect transformation to the prototile.
-		let vs = [ ...tile_shape, tile_shape[0] ];
-		vs = vs.map( v => mul( T, v ) );
+                return (area2 > 0) ? 1 : -1;
+        }
 
-		// Make bezier curves to represent each edge of the spiral tile.
-		let curves = [];
-		for (let i = 0; i < vs.length - 1; i++ ) {
-			let v1 = mul( tiling_T, vs[ i ] );
-			let v2 = mul( tiling_T, vs[ i+1 ] );
-			let edge_curves = sample_edge( v1, v2, bezier_detail );
-			let bezierCurves = fitCurve( edge_curves, 50 );
-			curves.push(...bezierCurves);
-		}
+        function normalizeVectorSafe( V )
+        {
+                const length = Math.hypot( V.x, V.y );
+                if( length === 0 ) {
+                        return null;
+                }
+
+                return { x: V.x / length, y: V.y / length };
+        }
+
+        function edgeNormal( edge, orientationSign )
+        {
+                const length = Math.hypot( edge.x, edge.y );
+                if( length === 0 ) {
+                        return { x: 0, y: 0 };
+                }
+
+                let nx = -edge.y;
+                let ny = edge.x;
+
+                if( orientationSign < 0 ) {
+                        nx = -nx;
+                        ny = -ny;
+                }
+
+                return { x: nx / length, y: ny / length };
+        }
+
+        function sampleQuadraticSegment( start, control, end, sampleCount )
+        {
+                const steps = Math.max( 1, sampleCount );
+                let pts = [];
+                for( let i = 0; i <= steps; ++i ) {
+                        const t = i / steps;
+                        const mt = 1.0 - t;
+                        const x = mt*mt*start.x + 2*mt*t*control.x + t*t*end.x;
+                        const y = mt*mt*start.y + 2*mt*t*control.y + t*t*end.y;
+                        pts.push( { x, y } );
+                }
+                return pts;
+        }
+
+        function computeBezierGuides( points, orientationSign, amount, closed )
+        {
+                const n = points.length;
+                const guides = new Array( n );
+
+                for( let i = 0; i < n; ++i ) {
+                        const curr = points[i];
+                        let normalSum = { x: 0, y: 0 };
+                        let lengthSum = 0.0;
+                        let neighborCount = 0;
+
+                        if( closed || i > 0 ) {
+                                const prev = points[(i - 1 + n) % n];
+                                const edge = { x: curr.x - prev.x, y: curr.y - prev.y };
+                                const edgeLength = Math.hypot( edge.x, edge.y );
+                                if( edgeLength > 0.0 ) {
+                                        const nrm = edgeNormal( edge, orientationSign );
+                                        normalSum.x += nrm.x;
+                                        normalSum.y += nrm.y;
+                                        lengthSum += edgeLength;
+                                        neighborCount += 1;
+                                }
+                        }
+
+                        if( closed || i < n - 1 ) {
+                                const next = points[(i + 1) % n];
+                                const edge = { x: next.x - curr.x, y: next.y - curr.y };
+                                const edgeLength = Math.hypot( edge.x, edge.y );
+                                if( edgeLength > 0.0 ) {
+                                        const nrm = edgeNormal( edge, orientationSign );
+                                        normalSum.x += nrm.x;
+                                        normalSum.y += nrm.y;
+                                        lengthSum += edgeLength;
+                                        neighborCount += 1;
+                                }
+                        }
+
+                        let guideDir = normalizeVectorSafe( normalSum );
+                        if( guideDir == null ) {
+                                if( closed || i < n - 1 ) {
+                                        const next = points[(i + 1) % n];
+                                        guideDir = edgeNormal(
+                                                { x: next.x - curr.x, y: next.y - curr.y },
+                                                orientationSign );
+                                } else if( closed || i > 0 ) {
+                                        const prev = points[(i - 1 + n) % n];
+                                        guideDir = edgeNormal(
+                                                { x: curr.x - prev.x, y: curr.y - prev.y },
+                                                orientationSign );
+                                } else {
+                                        guideDir = { x: 0, y: 0 };
+                                }
+                        }
+
+                        const averageLength = (neighborCount > 0) ? (lengthSum / neighborCount) : 0.0;
+                        const offset = amount * averageLength * 0.5;
+
+                        guides[i] = {
+                                x: curr.x + guideDir.x * offset,
+                                y: curr.y + guideDir.y * offset
+                        };
+                }
+
+                return guides;
+        }
+
+        function sampleBezierPolyline( points, orientationSign, amount, sampleCount, closed )
+        {
+                if( points.length === 0 ) {
+                        return [];
+                }
+
+                if( points.length === 1 ) {
+                        return [ { x: points[0].x, y: points[0].y } ];
+                }
+
+                const guides = computeBezierGuides( points, orientationSign, amount, closed );
+                const n = points.length;
+                const limit = closed ? n : (n - 1);
+                let samples = [];
+
+                for( let i = 0; i < limit; ++i ) {
+                        const start = points[i];
+                        const end = points[(i + 1) % n];
+                        const control = {
+                                x: 0.5 * (guides[i].x + guides[(i + 1) % n].x),
+                                y: 0.5 * (guides[i].y + guides[(i + 1) % n].y)
+                        };
+                        const segSamples = sampleQuadraticSegment( start, control, end, sampleCount );
+                        if( i > 0 ) {
+                                segSamples.shift();
+                        }
+                        samples.push( ...segSamples );
+                }
+
+                return samples;
+        }
+
+        // Return an SVG path representing the spiral tiling aspect with transformation T.
+        function getSpiralSVG( T )
+        {
+                // Return the spiral coordinates of point v.
+                function spiral( v ) {
+                        return {
+                                x: +( Math.exp( v.x ) * Math.cos( v.y ) ),
+                                y: +( Math.exp( v.x ) * Math.sin( v.y ) )
+                        };
+                }
+
+                // Apply the aspect transformation to the prototile.
+                let vs = [ ...tile_shape, tile_shape[0] ];
+                vs = vs.map( v => mul( T, v ) );
+                let transformed = vs.map( v => mul( tiling_T, v ) );
+                let actual = transformed.map( spiral );
+                const polygonPts = actual.slice( 0, actual.length - 1 );
+                const orientationSign = computePolygonOrientation( polygonPts );
+                const guides = computeBezierGuides(
+                        polygonPts,
+                        orientationSign,
+                        bezier_amount,
+                        true );
+
+                // Make bezier curves to represent each edge of the spiral tile.
+                let curves = [];
+                const edgeCount = polygonPts.length;
+                for( let i = 0; i < edgeCount; ++i ) {
+                        const start = polygonPts[i];
+                        const end = polygonPts[(i + 1) % edgeCount];
+                        const control = {
+                                x: 0.5 * (guides[i].x + guides[(i + 1) % edgeCount].x),
+                                y: 0.5 * (guides[i].y + guides[(i + 1) % edgeCount].y)
+                        };
+                        const edgeSamples = sampleQuadraticSegment(
+                                start,
+                                control,
+                                end,
+                                BEZIER_SAMPLE_POINTS );
+                        const edge_curves = edgeSamples.map( pt => [ pt.x, pt.y ] );
+                        const bezierCurves = fitCurve( edge_curves, 50 );
+                        curves.push( ...bezierCurves );
+                }
 
 		// Create SVG string representation of bezier curves.
 		let d = [`M ${curves[0][0][0]} ${curves[0][0][1]}`];
