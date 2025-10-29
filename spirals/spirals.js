@@ -69,6 +69,11 @@ function sktch( p5c )
 			p5c.loop();
 		}
 	}
+	
+	function isMobileDevice() {
+		return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+			   (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
+	}
 
 	let WIDTH = null;
 	let HEIGHT = null;
@@ -812,7 +817,73 @@ function sktch( p5c )
 
 	function doTouchStarted( id )
 	{
-		for( let b of [help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button] ) {
+		// Invisible exit button in top left corner when in fullscreen
+		if (fullscreen && hitBox(p5c.mouseX, p5c.mouseY, makeBox(0, 0, 100, 100))) {
+			toggleFullscreen();
+			p5c.loop();
+			return false;
+		}
+		
+		// On mobile in fullscreen, any tap (except top-left corner) triggers wow/spacebar
+		if (fullscreen && isMobileDevice()) {
+			// Reset view position to center
+			tiling_V = { x: 0.0, y: 0.0 };
+			
+			// Randomize IH tiling type (0-80 are valid indices in tilingTypes array)
+			const randomIH = Math.floor(Math.random() * 81);
+			ih_slider.value(randomIH);
+			tilingTypeChanged();
+			
+			// Randomize A slider within first 2/3 (1 to ~13.33)
+			const randomA = Math.floor(Math.random() * 13) + 1;
+			A_slider.value(randomA);
+			
+			// Randomize B slider within first 2/3 (1 to ~13.33)
+			const randomB = Math.floor(Math.random() * 13) + 1;
+			B_slider.value(randomB);
+			
+			spiralChanged();
+			
+			// Randomize all tiling parameter sliders within first 1/3 (0 to ~166.67)
+			if (tv_sliders != null) {
+				for (let sl of tv_sliders) {
+					const randomVal = Math.random() * (500.0 / 3.0);
+					sl.value(randomVal);
+				}
+				parameterChanged();
+			}
+			
+			// Randomize colors
+			randomizeColors();
+			
+			// Ensure all UI elements stay hidden
+			let elts = [
+				ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
+				help_button, fullscreen_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button
+			];
+			if (tv_sliders != null) {
+				elts = elts.concat(tv_sliders);
+			}
+			
+			for (let elt of elts) {
+				if (elt != null) {
+					elt.hide();
+				}
+			}
+			
+			// Hide color pickers
+			for (let i = 0; i < color_pickers.length; i++) {
+				if (color_pickers[i]) {
+					color_pickers[i].hide();
+					color_labels[i].hide();
+				}
+			}
+			
+			p5c.loop();
+			return false;
+		}
+		
+		for( let b of [help_button, fullscreen_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button] ) {
 			const pos = b.position();
 			const sz = b.size();
 			const r = makeBox( pos.x, pos.y, sz.width, sz.height );
@@ -1080,26 +1151,27 @@ function sktch( p5c )
 		fullscreen_button.size( 90, 30 );
 		fullscreen_button.position( 10, 10 );
 
-		if ( colour_button == null ) {
-			colour_button = p5c.createButton( "Colour" );
-			colour_button.mousePressed( toggleColour );
-		}
-		colour_button.size( 90, 30 );
-		colour_button.position( 10, 50 );
+		// Colour button removed - colour is always on now
+		// if ( colour_button == null ) {
+		// 	colour_button = p5c.createButton( "Colour" );
+		// 	colour_button.mousePressed( toggleColour );
+		// }
+		// colour_button.size( 90, 30 );
+		// colour_button.position( 10, 50 );
 
 		if ( randomize_colour_button == null ) {
 			randomize_colour_button = p5c.createButton( "Randomize" );
 			randomize_colour_button.mousePressed( randomizeColors );
 		}
 		randomize_colour_button.size( 90, 30 );
-		randomize_colour_button.position( 10, 90 );
+		randomize_colour_button.position( 10, 50 );
 
 		if ( toggle_pickers_button == null ) {
 			toggle_pickers_button = p5c.createButton( "Edit Colors" );
 			toggle_pickers_button.mousePressed( toggleColorPickers );
 		}
 		toggle_pickers_button.size( 90, 30 );
-		toggle_pickers_button.position( 10, 130 );
+		toggle_pickers_button.position( 10, 90 );
 
 		// Create color pickers
 		if (color_pickers.length === 0) {
@@ -1140,28 +1212,28 @@ function sktch( p5c )
 			animate_button.mousePressed( toggleAnimation );
 		}
 		animate_button.size( 90, 30 );
-		animate_button.position( 10, 170 );
+		animate_button.position( 10, 130 );
 
 		if( help_button == null ) {
 			help_button = p5c.createButton( "Help!" );
 			help_button.mousePressed( doHelp );
 		}
 		help_button.size( 90, 30 );
-		help_button.position( 10, 210 );
+		help_button.position( 10, 170 );
 
 		if( save_button == null ) {
 			save_button = p5c.createButton( "Save" );
 			save_button.mousePressed( doSave );
 		}
 		save_button.size( 90, 30 );
-		save_button.position( 10, 250 );
+		save_button.position( 10, 210 );
 
 		if( wow_button == null ) {
 			wow_button = p5c.createButton( "Wow" );
 			wow_button.mousePressed( doWow );
 		}
 		wow_button.size( 90, 30 );
-		wow_button.position( 10, 290 );
+		wow_button.position( 10, 250 );
 	}
 
 	function doSave()
@@ -1317,17 +1389,20 @@ function sktch( p5c )
 
 	function doWow()
 	{
+		// Reset view position to center
+		tiling_V = { x: 0.0, y: 0.0 };
+		
 		// Randomize IH tiling type (0-80 are valid indices in tilingTypes array)
 		const randomIH = Math.floor(Math.random() * 81);
 		ih_slider.value(randomIH);
 		tilingTypeChanged();
 		
-		// Randomize A slider within first 1/3 (0 to ~6.67)
-		const randomA = Math.floor(Math.random() * 7);
+		// Randomize A slider within first 2/3 (1 to ~13.33)
+		const randomA = Math.floor(Math.random() * 13) + 1;
 		A_slider.value(randomA);
 		
-		// Randomize B slider within first 1/3 (0 to ~6.67)
-		const randomB = Math.floor(Math.random() * 7);
+		// Randomize B slider within first 2/3 (1 to ~13.33)
+		const randomB = Math.floor(Math.random() * 13) + 1;
 		B_slider.value(randomB);
 		
 		spiralChanged();
@@ -1341,10 +1416,7 @@ function sktch( p5c )
 			parameterChanged();
 		}
 		
-		// Enable colour if not already enabled
-		if (!colour) {
-			toggleColour();
-		}
+		// Colour is always on now
 		// Randomize colors
 		randomizeColors();
 		// Enable animation if not already enabled
@@ -1362,7 +1434,7 @@ function sktch( p5c )
 		fullscreen = !fullscreen;
 		let elts = [
 			ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
-			help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button ].concat(
+			help_button, fullscreen_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button ].concat(
 				tv_sliders );
 
 		for( let elt of elts ) {
@@ -1433,11 +1505,30 @@ function sktch( p5c )
 
 		setupInterface();
 
-		the_type = 0;
+		// Start with random IH tiling type
+		the_type = Math.floor(Math.random() * 81);
 		const tp = tilingTypes[ the_type ];
 		tiling = new IsohedralTiling( tp );
 
 		setTilingType();
+		
+		// Update UI to show the random IH type
+		ih_slider.value(the_type);
+		const tt = tilingTypes[ the_type ];
+		const name = ((tt<10)?"IH0":"IH") + tt;
+		ih_label.html( name );
+		if (ih_dropdown) {
+			ih_dropdown.value(the_type.toString());
+		}
+		
+		// Start with random colors
+		randomizeColors();
+		
+		// Enable colour mode
+		colour = true;
+		
+		// Enable animation
+		animating = true;
 
 		p5c.textureWrap( p5c.REPEAT );
 		p5c.textureMode( p5c.NORMAL );
@@ -1460,17 +1551,20 @@ function sktch( p5c )
 		if (p5c.keyCode === 32) {
 			const wasFullscreen = fullscreen;
 			
+			// Reset view position to center
+			tiling_V = { x: 0.0, y: 0.0 };
+			
 			// Randomize IH tiling type (0-80 are valid indices in tilingTypes array)
 			const randomIH = Math.floor(Math.random() * 81);
 			ih_slider.value(randomIH);
 			tilingTypeChanged();
 			
-			// Randomize A slider within first 1/3 (0 to ~6.67)
-			const randomA = Math.floor(Math.random() * 7);
+			// Randomize A slider within first 2/3 (1 to ~13.33)
+			const randomA = Math.floor(Math.random() * 13) + 1;
 			A_slider.value(randomA);
 			
-			// Randomize B slider within first 1/3 (0 to ~6.67)
-			const randomB = Math.floor(Math.random() * 7);
+			// Randomize B slider within first 2/3 (1 to ~13.33)
+			const randomB = Math.floor(Math.random() * 13) + 1;
 			B_slider.value(randomB);
 			
 			spiralChanged();
@@ -1484,10 +1578,7 @@ function sktch( p5c )
 				parameterChanged();
 			}
 			
-			// Enable colour if not already enabled
-			if (!colour) {
-				toggleColour();
-			}
+			// Colour is always on now
 			// Randomize colors
 			randomizeColors();
 			// Enable animation if not already enabled
@@ -1503,7 +1594,7 @@ function sktch( p5c )
 			if (fullscreen) {
 				let elts = [
 					ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
-					help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button
+					help_button, fullscreen_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, wow_button
 				];
 				if (tv_sliders != null) {
 					elts = elts.concat(tv_sliders);
