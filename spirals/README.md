@@ -4,7 +4,7 @@ If you want to run this code yourself from source, you'll need to run a web serv
 
 ## New Features
 
-- **Bezier Detail Slider**: Control the number of sample points used for bezier curve fitting on edges (4-128 points). Higher values create smoother curves in the exported SVG.
+- **Bezier Amount Slider**: Adjust how much each tile edge bulges outward. Higher values produce curvier polygon sides across the editor, rendered tiling, and exported SVG.
 - **IH Type Dropdown**: In addition to the slider, you can now use a dropdown menu to select isohedral tiling types (IH01-IH81).
 - **Color Pickers**: Click the "Edit Colors" button to show/hide 6 color pickers for full control over:
   - Outline color

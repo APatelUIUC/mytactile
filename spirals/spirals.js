@@ -19,8 +19,10 @@ function sktch( p5c )
 	let params = null;
 	let tiling = null;
 	let edges = null;
-	let tile_shape = null;
-	let triangles = null;
+        let tile_shape = null;
+        let triangles = null;
+        let tile_parts_cache = [];
+        let edge_samples_cache = [];
 
 	let colouring = null;
 	let uniform_colouring = null;
@@ -87,9 +89,15 @@ function sktch( p5c )
 	let B_label = null;
 	let do_mobius = false;
 
-	let bezier_slider = null;
-	let bezier_label = null;
-	let bezier_detail = 32; // Number of sample points for bezier curves
+        let bezier_slider = null;
+        let bezier_label = null;
+        let bezier_amount = 0.0;
+        const BEZIER_SAMPLE_POINTS = 32; // Number of sample points for bezier curves
+        let bezier_mode = true;
+        let stored_bezier_amount = bezier_amount;
+        let stored_bezier_slider_value = 0;
+        let bezier_toggle_button = null;
+        let wow_button = null;
 
 	let color_pickers = [];
 	let color_labels = [];
@@ -401,29 +409,24 @@ function sktch( p5c )
 		u_constrain = false;
 	}
 
-	function cacheTileShape()
-	{
-		tile_shape = [];
-		let blah = [];
+        function cacheTileShape()
+        {
+                tile_parts_cache = [];
 
-		for( let i of tiling.parts() ) {
-			const ej = edges[i.id];
-			let cur = i.rev ? (ej.length-2) : 1;
-			const inc = i.rev ? -1 : 1;
+                for( let i of tiling.parts() ) {
+                        tile_parts_cache.push({
+                                T: [ ...i.T ],
+                                id: i.id,
+                                shape: i.shape,
+                                rev: i.rev,
+                                second: i.second
+                        });
+                }
 
-			for( let idx = 0; idx < ej.length - 1; ++idx ) {
-				const { x, y } = mul( i.T, ej[cur] );
-				tile_shape.push( { x : x, y : y } );
-				blah.push( x );
-				blah.push( y );
-				cur += inc;
-			}
-		}
-
-		triangles = earcut( blah );
-
-		drawTranslationalUnit();
-	}
+                rebuildEdgeSamples();
+                rebuildTileShapeGeometry();
+                drawTranslationalUnit();
+        }
 
 	function setTilingType()
 	{
@@ -501,12 +504,150 @@ function sktch( p5c )
 		p5c.loop();
 	}
 
-	function bezierChanged()
-	{
-		bezier_detail = p5c.int( bezier_slider.value() );
-		bezier_label.html( "Bezier Detail: " + bezier_detail );
-		p5c.loop();
-	}
+        function bezierChanged()
+        {
+                if( bezier_slider == null ) {
+                        return;
+                }
+
+                bezier_amount = p5c.int( bezier_slider.value() ) / 100.0;
+                if( bezier_mode ) {
+                        stored_bezier_amount = bezier_amount;
+                        stored_bezier_slider_value = p5c.int( bezier_slider.value() );
+                }
+
+                updateBezierLabel();
+                rebuildEdgeSamples();
+                rebuildTileShapeGeometry();
+                if( tile_shape.length > 0 && edit_box != null ) {
+                        calcEditorTransform();
+                }
+                drawTranslationalUnit();
+                p5c.loop();
+        }
+
+        function getActiveBezierAmount()
+        {
+                return bezier_mode ? bezier_amount : 0.0;
+        }
+
+        function updateBezierLabel()
+        {
+                if( bezier_label == null ) {
+                        return;
+                }
+
+                const status = bezier_mode ? "On" : "Off";
+                const amountText = getActiveBezierAmount().toFixed( 2 );
+                bezier_label.html( `Bezier Amount (${status}): ${amountText}` );
+        }
+
+        function updateBezierSliderState()
+        {
+                if( bezier_slider == null ) {
+                        return;
+                }
+
+                if( bezier_mode ) {
+                        bezier_slider.removeAttribute( 'disabled' );
+                        bezier_slider.value( stored_bezier_slider_value );
+                } else {
+                        bezier_slider.value( 0 );
+                        bezier_slider.attribute( 'disabled', 'true' );
+                }
+        }
+
+        function updateBezierToggleButton()
+        {
+                if( bezier_toggle_button != null ) {
+                        bezier_toggle_button.html( bezier_mode ? "Bezier Mode On" : "Bezier Mode Off" );
+                }
+        }
+
+        function toggleBezierMode()
+        {
+                bezier_mode = !bezier_mode;
+
+                if( bezier_mode ) {
+                        bezier_amount = stored_bezier_amount;
+                } else {
+                        stored_bezier_slider_value = ( bezier_slider != null ) ?
+                                p5c.int( bezier_slider.value() ) : stored_bezier_slider_value;
+                        stored_bezier_amount = bezier_amount;
+                        bezier_amount = 0.0;
+                }
+
+                updateBezierSliderState();
+                updateBezierToggleButton();
+                updateBezierLabel();
+                rebuildEdgeSamples();
+                rebuildTileShapeGeometry();
+                if( tile_shape.length > 0 && edit_box != null ) {
+                        calcEditorTransform();
+                }
+                drawTranslationalUnit();
+                p5c.loop();
+        }
+
+        function randomizeWow()
+        {
+                if( ih_slider != null ) {
+                        const randomType = Math.floor( p5c.random( numTypes ) );
+                        ih_slider.value( randomType );
+                        if( ih_dropdown != null ) {
+                                ih_dropdown.value( randomType.toString() );
+                        }
+                        tilingTypeChanged();
+                }
+
+                let spiralChangedNeeded = false;
+                if( A_slider != null ) {
+                        const randomA = Math.floor( p5c.random( 0, 21 ) );
+                        A_slider.value( randomA );
+                        spiralChangedNeeded = true;
+                }
+
+                if( B_slider != null ) {
+                        const randomB = Math.floor( p5c.random( 0, 21 ) );
+                        B_slider.value( randomB );
+                        spiralChangedNeeded = true;
+                }
+
+                if( spiralChangedNeeded ) {
+                        spiralChanged();
+                }
+
+                if( tv_sliders != null && tv_sliders.length > 0 ) {
+                        for( let sl of tv_sliders ) {
+                                const randomVal = Math.floor( p5c.random( 0, 501 ) );
+                                sl.value( randomVal );
+                        }
+                        parameterChanged();
+                }
+
+                if( bezier_slider != null ) {
+                        if( bezier_mode ) {
+                                const randomBezier = Math.floor( p5c.random( 0, 101 ) );
+                                bezier_slider.value( randomBezier );
+                                bezierChanged();
+                        } else {
+                                bezier_slider.value( 0 );
+                                bezier_amount = 0.0;
+                                stored_bezier_amount = 0.0;
+                                stored_bezier_slider_value = 0;
+                                updateBezierLabel();
+                                rebuildEdgeSamples();
+                                rebuildTileShapeGeometry();
+                                if( tile_shape.length > 0 && edit_box != null ) {
+                                        calcEditorTransform();
+                                }
+                                drawTranslationalUnit();
+                                p5c.loop();
+                        }
+                }
+
+                p5c.loop();
+        }
 
 	function spiralChanged()
 	{
@@ -573,44 +714,50 @@ function sktch( p5c )
 		const est_sc = Math.sqrt( Math.abs( det / (r1 * r2) ) );
 		// console.log( est_sc );
 
-		fbo.push();
-		fbo.applyMatrix( M[0], M[1], M[2], M[3], 0.0, 0.0 );
-		const bx = getTilingRect( t1, t2 );
+                fbo.push();
+                fbo.applyMatrix( M[0], M[1], M[2], M[3], 0.0, 0.0 );
+                const bx = getTilingRect( t1, t2 );
+                const scaleMatrix = [ FBO_DIM, 0, 0, 0, FBO_DIM, 0 ];
 
-		for( let i of tiling.fillRegionQuad( bx[0], bx[1], bx[2], bx[3] ) ) {
-			const TT = i.T;
-			let tshape = [];
-			for( let v of tile_shape ) {
-				let P = mul( TT, v );
-				P.x *= FBO_DIM;
-				P.y *= FBO_DIM;
-				tshape.push( P );
-			}
+                for( let i of tiling.fillRegionQuad( bx[0], bx[1], bx[2], bx[3] ) ) {
+                        const TT = i.T;
+                        let tshape = [];
+                        for( let v of tile_shape ) {
+                                let P = mul( TT, v );
+                                P.x *= FBO_DIM;
+                                P.y *= FBO_DIM;
+                                tshape.push( P );
+                        }
 
-			const col = colouring.getColour( i.t1, i.t2, i.aspect );
-			fbo.fill( col[0], col[1], col[2] );
-			fbo.stroke( col[0], col[1], col[2] );
-			fbo.strokeWeight( est_sc );
+                        const col = colouring.getColour( i.t1, i.t2, i.aspect );
+                        fbo.fill( col[0], col[1], col[2] );
+                        fbo.stroke( col[0], col[1], col[2] );
+                        fbo.strokeWeight( est_sc );
 
-			for( let idx = 0; idx < triangles.length; idx += 3 ) {
-				fbo.triangle( 
-					tshape[triangles[idx]].x, tshape[triangles[idx]].y,
-					tshape[triangles[idx+1]].x, tshape[triangles[idx+1]].y,
-					tshape[triangles[idx+2]].x, tshape[triangles[idx+2]].y );
-			}
+                        for( let idx = 0; idx < triangles.length; idx += 3 ) {
+                                fbo.triangle(
+                                        tshape[triangles[idx]].x, tshape[triangles[idx]].y,
+                                        tshape[triangles[idx+1]].x, tshape[triangles[idx+1]].y,
+                                        tshape[triangles[idx+2]].x, tshape[triangles[idx+2]].y );
+                        }
 
-			fbo.stroke( COLS[0][0], COLS[0][1], COLS[0][2] );
-			fbo.strokeWeight( 20 * est_sc );
-			fbo.strokeJoin( p5c.ROUND );
-			fbo.noFill();
+                        fbo.stroke( COLS[0][0], COLS[0][1], COLS[0][2] );
+                        fbo.strokeWeight( 20 * est_sc );
+                        fbo.strokeJoin( p5c.ROUND );
+                        fbo.noFill();
 
-			for( let idx = 0; idx < tile_shape.length; ++idx ) {
-				const P = tshape[idx];
-				const Q = tshape[(idx+1)%tile_shape.length];
-
-				fbo.line( P.x, P.y, Q.x, Q.y );
-			}
-		}
+                        for( let part of tile_parts_cache ) {
+                                const partTransform = mul( TT, part.T );
+                                const fullTransform = mul( scaleMatrix, partTransform );
+                                let prev = null;
+                                iterateEdgeSamplePoints( part.id, part.rev, fullTransform, ( pt ) => {
+                                        if( prev != null ) {
+                                                fbo.line( prev.x, prev.y, pt.x, pt.y );
+                                        }
+                                        prev = pt;
+                                } );
+                        }
+                }
 
 		fbo.pop();
 
@@ -742,38 +889,37 @@ function sktch( p5c )
 
 		let tshape = [];
 
-		for( let v of tile_shape ) {
-			tshape.push( mul( editor_T, v ) );
-		}
+                for( let v of tile_shape ) {
+                        tshape.push( mul( editor_T, v ) );
+                }
 
-		for( let i = 0; i < triangles.length; i += 3 ) {
-			p5c.triangle( 
-				tshape[triangles[i]].x, tshape[triangles[i]].y,
-				tshape[triangles[i+1]].x, tshape[triangles[i+1]].y,
-				tshape[triangles[i+2]].x, tshape[triangles[i+2]].y );
+                for( let i = 0; i < triangles.length; i += 3 ) {
+                        p5c.triangle(
+                                tshape[triangles[i]].x, tshape[triangles[i]].y,
+                                tshape[triangles[i+1]].x, tshape[triangles[i+1]].y,
+                                tshape[triangles[i+2]].x, tshape[triangles[i+2]].y );
 		}
 
 		p5c.strokeWeight( 2.0 );
 		p5c.noFill();
 
-		// Draw edges
-		for( let i of tiling.parts() ) {
-			if( i.shape == EdgeShape.I ) {
-				p5c.stroke( 158 );
-			} else {
-				p5c.stroke( 0 );
-			}
+                // Draw edges
+                for( let i of tile_parts_cache ) {
+                        if( i.shape == EdgeShape.I ) {
+                                p5c.stroke( 158 );
+                        } else {
+                                p5c.stroke( 0 );
+                        }
 
-			const M = mul( editor_T, i.T );
-			let prev = null;
-			for( let v of edges[i.id] ) {
-				const P = mul( M, v );
-				if( prev != null ) {
-					p5c.line( prev.x, prev.y, P.x, P.y );
-				}
-				prev = P;
-			}
-		}
+                        const M = mul( editor_T, i.T );
+                        let prev = null;
+                        iterateEdgeSamplePoints( i.id, i.rev, M, ( pt ) => {
+                                if( prev != null ) {
+                                        p5c.line( prev.x, prev.y, pt.x, pt.y );
+                                }
+                                prev = pt;
+                        } );
+                }
 
 		// Draw tiling vertices
 		p5c.noStroke();
@@ -784,11 +930,11 @@ function sktch( p5c )
 		}
 
 		// Draw editable vertices
-		for( let i of tiling.parts() ) {
-			const shp = i.shape;
-			const id = i.id;
-			const ej = edges[id];
-			const T = mul( editor_T, i.T );
+                for( let i of tile_parts_cache ) {
+                        const shp = i.shape;
+                        const id = i.id;
+                        const ej = edges[id];
+                        const T = mul( editor_T, i.T );
 
 			for( let idx = 1; idx < ej.length - 1; ++idx ) {
 				p5c.fill( 0 );
@@ -823,7 +969,7 @@ function sktch( p5c )
 
 	function doTouchStarted( id )
 	{
-		for( let b of [help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button] ) {
+                for( let b of [help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button, bezier_toggle_button, wow_button] ) {
 			const pos = b.position();
 			const sz = b.size();
 			const r = makeBox( pos.x, pos.y, sz.width, sz.height );
@@ -1073,23 +1219,44 @@ function sktch( p5c )
 		B_label.position( WIDTH - 70, HEIGHT/2 - 55 );
 		setLabelStyle( B_label );
 
-		if( bezier_slider == null ) {
-			bezier_slider = p5c.createSlider( 4, 128, 32, 4 );
-			bezier_slider.input( bezierChanged );
-		}
-		bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
-		bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
+                if( bezier_slider == null ) {
+                        bezier_slider = p5c.createSlider( 0, 100, 0, 1 );
+                        bezier_slider.input( bezierChanged );
+                }
+                bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 15 );
+                bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
 
-		if( bezier_label == null ) {
-			bezier_label = p5c.createSpan( "Bezier Detail: " + bezier_detail );
-		}
-		bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
-		setLabelStyle( bezier_label );
+                if( bezier_label == null ) {
+                        bezier_label = p5c.createSpan( "" );
+                }
+                bezier_label.position( WIDTH/2 + 20, HEIGHT/2 - 45 );
+                setLabelStyle( bezier_label );
+                bezier_label.style( "text-align", "left" );
+                bezier_label.style( "font-size", "18px" );
 
-		edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
+                updateBezierSliderState();
+                updateBezierLabel();
+                updateBezierToggleButton();
 
-		if( tv_sliders != null ) {
-			let yy = 50;
+                edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
+
+                if( bezier_toggle_button == null ) {
+                        bezier_toggle_button = p5c.createButton( "" );
+                        bezier_toggle_button.mousePressed( toggleBezierMode );
+                }
+                bezier_toggle_button.size( 90, 30 );
+                bezier_toggle_button.position( 10, 290 );
+                updateBezierToggleButton();
+
+                if( wow_button == null ) {
+                        wow_button = p5c.createButton( "Wow" );
+                        wow_button.mousePressed( randomizeWow );
+                }
+                wow_button.size( 90, 30 );
+                wow_button.position( 10, 330 );
+
+                if( tv_sliders != null ) {
+                        let yy = 50;
 			for( let sl of tv_sliders ) {
 				sl.position( WIDTH/2 + 20, yy );
 				sl.style( "width", "" + (WIDTH/2-100) + "px" );
@@ -1269,47 +1436,175 @@ function sktch( p5c )
 		return defs;
 	}
 
-	// Return an SVG path representing the spiral tiling aspect with transformation T.
-	function getSpiralSVG( T )
-	{
-		// Return the spiral coordinates of point v.
-		function spiral( v ) {
-			return {
-				x: +( Math.exp(v.x) * Math.cos(v.y) ),
-				y: +( Math.exp(v.x) * Math.sin(v.y) )}
-		}
+        function sampleQuadraticSegment( p1, p2, amount, sampleCount )
+        {
+                let ctrl = {
+                        x: 0.5 * ( p1.x + p2.x ),
+                        y: 0.5 * ( p1.y + p2.y )
+                };
 
-		// Return the point that divides the line segment from v1 to v2 into ratio m:n.
-		function section( v1, v2, m, n ) {
-			return {
-				x: ( m*v1.x + n*v2.x ) / ( m + n ),
-				y: ( m*v1.y + n*v2.y ) / ( m + n )
-			}
-		}
+                if( amount !== 0.0 ) {
+                        const edge = { x: p2.x - p1.x, y: p2.y - p1.y };
+                        const length = Math.hypot( edge.x, edge.y );
+                        if( length > 0.0 ) {
+                                let normal = { x: -edge.y, y: edge.x };
+                                const normLen = Math.hypot( normal.x, normal.y );
+                                if( normLen > 0.0 ) {
+                                        normal.x /= normLen;
+                                        normal.y /= normLen;
 
-		// Return sample points from tiling edge.
-		function sample_edge( v1, v2, n ) {
-			let pts = [];
-			for ( let i = 0; i <= n; i++ ) {
-				let p = spiral( section( v1, v2, n - i, i ) );
-				pts.push( [ p.x, p.y ] );
-			}
-			return pts;
-		}
+                                        const offset = length * amount * 0.5;
+                                        ctrl.x += normal.x * offset;
+                                        ctrl.y += normal.y * offset;
+                                }
+                        }
+                }
 
-		// Apply the aspect transformation to the prototile.
-		let vs = [ ...tile_shape, tile_shape[0] ];
-		vs = vs.map( v => mul( T, v ) );
+                let pts = [];
+                for( let i = 0; i <= sampleCount; i++ ) {
+                        const t = i / sampleCount;
+                        const mt = 1.0 - t;
+                        const x = mt*mt*p1.x + 2*mt*t*ctrl.x + t*t*p2.x;
+                        const y = mt*mt*p1.y + 2*mt*t*ctrl.y + t*t*p2.y;
+                        pts.push( { x, y } );
+                }
 
-		// Make bezier curves to represent each edge of the spiral tile.
-		let curves = [];
-		for (let i = 0; i < vs.length - 1; i++ ) {
-			let v1 = mul( tiling_T, vs[ i ] );
-			let v2 = mul( tiling_T, vs[ i+1 ] );
-			let edge_curves = sample_edge( v1, v2, bezier_detail );
-			let bezierCurves = fitCurve( edge_curves, 50 );
-			curves.push(...bezierCurves);
-		}
+                return pts;
+        }
+
+        function buildEdgeSamplesForEdge( edgePoints, amount, sampleCount )
+        {
+                if( edgePoints.length < 2 ) {
+                        return [];
+                }
+
+                let segments = [];
+                for( let idx = 0; idx < edgePoints.length - 1; ++idx ) {
+                        segments.push(
+                                sampleQuadraticSegment(
+                                        edgePoints[idx],
+                                        edgePoints[idx+1],
+                                        amount,
+                                        sampleCount ) );
+                }
+
+                return segments;
+        }
+
+        function rebuildEdgeSamples()
+        {
+                if( !edges ) {
+                        edge_samples_cache = [];
+                        return;
+                }
+
+                const activeAmount = getActiveBezierAmount();
+                const sampleCount = bezier_mode ? BEZIER_SAMPLE_POINTS : 1;
+
+                edge_samples_cache = edges.map( edgePoints =>
+                        buildEdgeSamplesForEdge( edgePoints, activeAmount, sampleCount ) );
+        }
+
+        function rebuildTileShapeGeometry()
+        {
+                tile_shape = [];
+
+                if( !tile_parts_cache || tile_parts_cache.length === 0 ) {
+                        triangles = [];
+                        return;
+                }
+
+                const coords = [];
+                const EPS = 1e-6;
+
+                for( let part of tile_parts_cache ) {
+                        const transform = part.T;
+                        iterateEdgeSamplePoints( part.id, part.rev, transform, ( pt ) => {
+                                if( tile_shape.length > 0 ) {
+                                        const prev = tile_shape[ tile_shape.length - 1 ];
+                                        if( Math.abs( prev.x - pt.x ) < EPS && Math.abs( prev.y - pt.y ) < EPS ) {
+                                                return;
+                                        }
+                                }
+
+                                tile_shape.push( { x: pt.x, y: pt.y } );
+                                coords.push( pt.x, pt.y );
+                        } );
+                }
+
+                if( tile_shape.length > 1 ) {
+                        const first = tile_shape[0];
+                        const last = tile_shape[ tile_shape.length - 1 ];
+                        if( Math.abs( first.x - last.x ) < EPS && Math.abs( first.y - last.y ) < EPS ) {
+                                tile_shape.pop();
+                                if( coords.length >= 2 ) {
+                                        coords.pop();
+                                        coords.pop();
+                                }
+                        }
+                }
+
+                triangles = coords.length >= 6 ? earcut( coords ) : [];
+        }
+
+        function iterateEdgeSamplePoints( edgeId, reversed, transformMatrix, callback )
+        {
+                const segments = edge_samples_cache[ edgeId ] || [];
+
+                if( !reversed ) {
+                        for( let segIdx = 0; segIdx < segments.length; ++segIdx ) {
+                                const seg = segments[ segIdx ];
+                                for( let ptIdx = 0; ptIdx < seg.length; ++ptIdx ) {
+                                        if( segIdx > 0 && ptIdx === 0 ) {
+                                                continue;
+                                        }
+                                        callback( mul( transformMatrix, seg[ ptIdx ] ) );
+                                }
+                        }
+                } else {
+                        for( let segIdx = segments.length - 1; segIdx >= 0; --segIdx ) {
+                                const seg = segments[ segIdx ];
+                                for( let ptIdx = seg.length - 1; ptIdx >= 0; --ptIdx ) {
+                                        if( segIdx < segments.length - 1 && ptIdx === seg.length - 1 ) {
+                                                continue;
+                                        }
+                                        callback( mul( transformMatrix, seg[ ptIdx ] ) );
+                                }
+                        }
+                }
+        }
+
+        // Return an SVG path representing the spiral tiling aspect with transformation T.
+        function getSpiralSVG( T )
+        {
+                // Return the spiral coordinates of point v.
+                function spiral( v ) {
+                        return {
+                                x: +( Math.exp( v.x ) * Math.cos( v.y ) ),
+                                y: +( Math.exp( v.x ) * Math.sin( v.y ) )
+                        };
+                }
+
+                // Make bezier curves to represent each edge of the spiral tile.
+                let curves = [];
+                for( let part of tile_parts_cache ) {
+                        const aspectTransform = mul( T, part.T );
+                        const spiralTransform = mul( tiling_T, aspectTransform );
+                        let edgeSamples = [];
+                        iterateEdgeSamplePoints( part.id, part.rev, spiralTransform, ( pt ) => {
+                                const spr = spiral( pt );
+                                edgeSamples.push( [ spr.x, spr.y ] );
+                        } );
+
+                        if( edgeSamples.length >= 2 ) {
+                                const bezierCurves = fitCurve( edgeSamples, 50 );
+                                curves.push( ...bezierCurves );
+                        }
+                }
+
+                if( curves.length === 0 ) {
+                        return document.createElementNS( XMLNS, 'path' );
+                }
 
 		// Create SVG string representation of bezier curves.
 		let d = [`M ${curves[0][0][0]} ${curves[0][0][1]}`];
@@ -1336,9 +1631,9 @@ function sktch( p5c )
 		fullscreen = !fullscreen;
 		let elts = [
 			ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
-			bezier_slider, bezier_label,
-			help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button ].concat(
-				tv_sliders );
+                        bezier_slider, bezier_label, bezier_toggle_button, wow_button,
+                        help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button ].concat(
+                                tv_sliders );
 
 		for( let elt of elts ) {
 			if( elt != null ) {
