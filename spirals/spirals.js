@@ -406,9 +406,7 @@ function sktch( p5c )
 
         function cacheTileShape()
         {
-                tile_shape = [];
                 tile_parts_cache = [];
-                let blah = [];
 
                 for( let i of tiling.parts() ) {
                         tile_parts_cache.push({
@@ -418,23 +416,10 @@ function sktch( p5c )
                                 rev: i.rev,
                                 second: i.second
                         });
-
-                        const ej = edges[i.id];
-                        let cur = i.rev ? (ej.length-2) : 1;
-                        const inc = i.rev ? -1 : 1;
-
-                        for( let idx = 0; idx < ej.length - 1; ++idx ) {
-                                const { x, y } = mul( i.T, ej[cur] );
-                                tile_shape.push( { x : x, y : y } );
-                                blah.push( x );
-                                blah.push( y );
-                                cur += inc;
-                        }
                 }
 
-                triangles = earcut( blah );
-
                 rebuildEdgeSamples();
+                rebuildTileShapeGeometry();
                 drawTranslationalUnit();
         }
 
@@ -519,6 +504,10 @@ function sktch( p5c )
                 bezier_amount = p5c.int( bezier_slider.value() ) / 100.0;
                 bezier_label.html( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
                 rebuildEdgeSamples();
+                rebuildTileShapeGeometry();
+                if( tile_shape.length > 0 && edit_box != null ) {
+                        calcEditorTransform();
+                }
                 drawTranslationalUnit();
                 p5c.loop();
         }
@@ -1353,6 +1342,48 @@ function sktch( p5c )
 
                 edge_samples_cache = edges.map( edgePoints =>
                         buildEdgeSamplesForEdge( edgePoints, bezier_amount, BEZIER_SAMPLE_POINTS ) );
+        }
+
+        function rebuildTileShapeGeometry()
+        {
+                tile_shape = [];
+
+                if( !tile_parts_cache || tile_parts_cache.length === 0 ) {
+                        triangles = [];
+                        return;
+                }
+
+                const coords = [];
+                const EPS = 1e-6;
+
+                for( let part of tile_parts_cache ) {
+                        const transform = part.T;
+                        iterateEdgeSamplePoints( part.id, part.rev, transform, ( pt ) => {
+                                if( tile_shape.length > 0 ) {
+                                        const prev = tile_shape[ tile_shape.length - 1 ];
+                                        if( Math.abs( prev.x - pt.x ) < EPS && Math.abs( prev.y - pt.y ) < EPS ) {
+                                                return;
+                                        }
+                                }
+
+                                tile_shape.push( { x: pt.x, y: pt.y } );
+                                coords.push( pt.x, pt.y );
+                        } );
+                }
+
+                if( tile_shape.length > 1 ) {
+                        const first = tile_shape[0];
+                        const last = tile_shape[ tile_shape.length - 1 ];
+                        if( Math.abs( first.x - last.x ) < EPS && Math.abs( first.y - last.y ) < EPS ) {
+                                tile_shape.pop();
+                                if( coords.length >= 2 ) {
+                                        coords.pop();
+                                        coords.pop();
+                                }
+                        }
+                }
+
+                triangles = coords.length >= 6 ? earcut( coords ) : [];
         }
 
         function iterateEdgeSamplePoints( edgeId, reversed, transformMatrix, callback )
