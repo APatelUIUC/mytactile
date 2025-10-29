@@ -91,8 +91,12 @@ function sktch( p5c )
 
         let bezier_slider = null;
         let bezier_label = null;
+        let bezier_toggle_button = null;
+        let bezier_enabled = false;
         let bezier_amount = 0.0;
         const BEZIER_SAMPLE_POINTS = 32; // Number of sample points for bezier curves
+
+        let wow_button = null;
 
 	let color_pickers = [];
 	let color_labels = [];
@@ -499,10 +503,31 @@ function sktch( p5c )
 		p5c.loop();
 	}
 
+        function updateBezierLabel()
+        {
+                if( bezier_label != null ) {
+                        const amountDisplay = bezier_enabled ? bezier_amount : 0.0;
+                        const status = bezier_enabled ? "" : " (Off)";
+                        bezier_label.html( "Bezier Amount: " + amountDisplay.toFixed( 2 ) + status );
+                }
+
+                if( bezier_slider != null ) {
+                        if( bezier_enabled ) {
+                                bezier_slider.removeAttribute( "disabled" );
+                        } else {
+                                bezier_slider.attribute( "disabled", "true" );
+                        }
+                }
+
+                if( bezier_toggle_button != null ) {
+                        bezier_toggle_button.html( bezier_enabled ? "Bezier: On" : "Bezier: Off" );
+                }
+        }
+
         function bezierChanged()
         {
                 bezier_amount = p5c.int( bezier_slider.value() ) / 100.0;
-                bezier_label.html( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
+                updateBezierLabel();
                 rebuildEdgeSamples();
                 rebuildTileShapeGeometry();
                 if( tile_shape.length > 0 && edit_box != null ) {
@@ -510,6 +535,67 @@ function sktch( p5c )
                 }
                 drawTranslationalUnit();
                 p5c.loop();
+        }
+
+        function toggleBezierMode()
+        {
+                bezier_enabled = !bezier_enabled;
+                updateBezierLabel();
+                rebuildEdgeSamples();
+                rebuildTileShapeGeometry();
+                if( tile_shape.length > 0 && edit_box != null ) {
+                        calcEditorTransform();
+                }
+                drawTranslationalUnit();
+                p5c.loop();
+        }
+
+        function wowRandomize()
+        {
+                if( ih_slider != null ) {
+                        const randomIH = Math.floor( Math.random() * numTypes );
+                        ih_slider.value( randomIH );
+                        if( ih_dropdown != null ) {
+                                ih_dropdown.value( randomIH.toString() );
+                        }
+                        tilingTypeChanged();
+                }
+
+                if( A_slider != null && B_slider != null ) {
+                        const aMin = Number( A_slider.elt.min || 0 );
+                        const aMax = Number( A_slider.elt.max || 0 );
+                        const bMin = Number( B_slider.elt.min || 0 );
+                        const bMax = Number( B_slider.elt.max || 0 );
+
+                        const randomA = Math.floor( Math.random() * (aMax - aMin + 1) ) + aMin;
+                        const randomB = Math.floor( Math.random() * (bMax - bMin + 1) ) + bMin;
+
+                        A_slider.value( randomA );
+                        B_slider.value( randomB );
+                        spiralChanged();
+                }
+
+                if( tv_sliders != null && tv_sliders.length > 0 ) {
+                        for( let sl of tv_sliders ) {
+                                const min = Number( sl.elt.min || 0 );
+                                const max = Number( sl.elt.max || 0 );
+                                const value = Math.random() * (max - min) + min;
+                                sl.value( value );
+                        }
+                        parameterChanged();
+                }
+
+                if( bezier_slider != null ) {
+                        const min = Number( bezier_slider.elt.min || 0 );
+                        const max = Number( bezier_slider.elt.max || 0 );
+                        if( bezier_enabled ) {
+                                const value = Math.floor( Math.random() * (max - min + 1) ) + min;
+                                bezier_slider.value( value );
+                        } else {
+                                bezier_slider.value( 0 );
+                        }
+                        bezierChanged();
+                }
         }
 
 	function spiralChanged()
@@ -1086,16 +1172,34 @@ function sktch( p5c )
                         bezier_slider = p5c.createSlider( 0, 100, 0, 1 );
                         bezier_slider.input( bezierChanged );
                 }
-                bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 20 );
+                bezier_slider.position( WIDTH/2 + 20, HEIGHT/2 - 5 );
                 bezier_slider.style( "width", "" + (WIDTH/2-100) + "px" );
 
                 if( bezier_label == null ) {
                         bezier_label = p5c.createSpan( "Bezier Amount: " + bezier_amount.toFixed( 2 ) );
                 }
-                bezier_label.position( WIDTH - 160, HEIGHT/2 - 25 );
+                bezier_label.position( WIDTH/2 + 20, HEIGHT/2 - 40 );
                 setLabelStyle( bezier_label );
+                bezier_label.style( "text-align", "left" );
+                bezier_label.style( "width", "200px" );
 
-		edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
+                if( bezier_toggle_button == null ) {
+                        bezier_toggle_button = p5c.createButton( "Bezier: Off" );
+                        bezier_toggle_button.mousePressed( toggleBezierMode );
+                }
+                bezier_toggle_button.size( 120, 30 );
+                bezier_toggle_button.position( 10, 170 );
+
+                if( wow_button == null ) {
+                        wow_button = p5c.createButton( "Wow" );
+                        wow_button.mousePressed( wowRandomize );
+                }
+                wow_button.size( 90, 30 );
+                wow_button.position( 10, 210 );
+
+                updateBezierLabel();
+
+                edit_box = makeBox( 150, 50, WIDTH/2-200, HEIGHT/2-100 );
 
 		if( tv_sliders != null ) {
 			let yy = 50;
@@ -1340,8 +1444,9 @@ function sktch( p5c )
                         return;
                 }
 
+                const amount = bezier_enabled ? bezier_amount : 0.0;
                 edge_samples_cache = edges.map( edgePoints =>
-                        buildEdgeSamplesForEdge( edgePoints, bezier_amount, BEZIER_SAMPLE_POINTS ) );
+                        buildEdgeSamplesForEdge( edgePoints, amount, BEZIER_SAMPLE_POINTS ) );
         }
 
         function rebuildTileShapeGeometry()
@@ -1470,9 +1575,10 @@ function sktch( p5c )
 		fullscreen = !fullscreen;
 		let elts = [
 			ih_slider, ih_label, ih_dropdown, A_slider, A_label, B_slider, B_label,
-			bezier_slider, bezier_label,
-			help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button ].concat(
-				tv_sliders );
+                        bezier_slider, bezier_label, bezier_toggle_button,
+                        wow_button,
+                        help_button, fullscreen_button, colour_button, randomize_colour_button, toggle_pickers_button, animate_button, save_button ].concat(
+                                tv_sliders );
 
 		for( let elt of elts ) {
 			if( elt != null ) {
